@@ -1,0 +1,56 @@
+version: "3.9"
+
+services:
+  # ─── PostGIS Database ─────────────────────────────────────────────────────
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: pond_db
+    environment:
+      POSTGRES_DB: village_pond
+      POSTGRES_USER: pond_user
+      POSTGRES_PASSWORD: pond_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pond_user -d village_pond"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── FastAPI Backend ──────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pond_backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://pond_user:pond_pass@db:5432/village_pond
+      DATABASE_SYNC_URL: postgresql+psycopg2://pond_user:pond_pass@db:5432/village_pond
+      DEBUG: "false"
+      DEM_CACHE_DIR: /app/dem_cache
+    ports:
+      - "8000:8000"
+    volumes:
+      - dem_cache:/app/dem_cache
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "python -m scripts.init_db && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  # ─── React Frontend ───────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: pond_frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  dem_cache:
