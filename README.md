@@ -108,18 +108,6 @@ pytest tests/ -v
 
 Covers: runoff formula, unit conversions, pond sizing, scoring, slope computation, contour GeoJSON structure.
 
----
-
-## Evaluation Rubric Mapping
-
-| Criterion | Marks | Where covered |
-|---|---|---|
-| System functionality | 35 | All 10 API endpoints + full orchestration |
-| Terrain & catchment analysis | 20 | `geospatial/terrain.py`, `geospatial/catchment.py` |
-| Frontend & visualization | 5 | React + Leaflet with layer controls |
-| Software design & code quality | 15 | FastAPI orchestration, `geospatial/` module separation |
-| System design & management | 15 | Docker, caching, error handling, schedule |
-| Documentation & report | 10 | This README + FastAPI auto-docs + algorithm docstrings |
 
 ---
 
