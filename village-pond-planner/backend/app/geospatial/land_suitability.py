@@ -76,19 +76,38 @@ def classify_land_status(
     )[0]
 
 
-def score_terrain(slope_deg: float, elevation_m: float, elev_threshold: float) -> float:
+def score_terrain(
+    slope_deg: float,
+    elevation_m: float,
+    elev_threshold: float,
+    flow_accum: int = 0,
+    max_accum: int = 1,
+    min_accum: int = 0,
+) -> float:
     """
     Terrain sub-score T ∈ [0, 1].
 
     Higher score for:
       - Lower slope (flatter land → easier excavation, less runoff loss).
-      - Lower elevation relative to the village (collects upslope drainage).
+      - Lower elevation relative to the study area (sits in a valley bottom).
+      - Higher flow accumulation relative to non-stream cells (more upslope
+        drainage converges here → more water collected into the pond).
+
+    Weights:
+      40% slope + 30% relative elevation + 30% flow accumulation
     """
+    # Slope: 0° = perfect, slope_threshold = 0
     slope_score = max(0.0, 1.0 - slope_deg / settings.SLOPE_THRESHOLD_DEG)
-    # elevation score: 1.0 if at threshold, 0.0 if 30 m above
+
+    # Elevation: cells below the threshold score 1.0, linearly decaying above it
     elev_above = max(0.0, elevation_m - elev_threshold)
     elev_score = max(0.0, 1.0 - elev_above / 30.0)
-    return 0.6 * slope_score + 0.4 * elev_score
+
+    # Flow accumulation: cells that collect more water score higher
+    accum_range = max(1, max_accum - min_accum)
+    accum_score = float(flow_accum - min_accum) / accum_range
+
+    return 0.40 * slope_score + 0.30 * elev_score + 0.30 * accum_score
 
 
 def rank_candidates(
@@ -99,19 +118,28 @@ def rank_candidates(
 ) -> list[dict]:
     """
     Take raw candidate cells (from terrain.identify_candidate_cells),
-    classify land status, compute terrain + land scores, filter ineligible
-    land, and return the top-`max_sites` candidates ranked by terrain_score.
+    classify land status, compute terrain + land scores (incorporating
+    flow accumulation), filter ineligible land, and return the top-`max_sites`
+    candidates ranked by terrain_score.
 
-    Each returned dict has:
-      lat, lon, elevation_m, slope_deg, land_status,
-      terrain_score, land_score, is_eligible
+    The terrain score now uses flow accumulation as a positive signal:
+    cells that collect more water from upslope are better pond sites,
+    as long as they are not *inside* an active river channel (which the
+    upstream identify_candidate_cells already filters out via stream_mask).
     """
     if not raw_candidates:
         return []
 
+    # Use the full candidate elevation range for normalisation so the scoring
+    # differentiates within the actual candidate set, not an arbitrary offset.
+    elevs = [c["elevation_m"] for c in raw_candidates]
     if elev_threshold is None:
-        elevs = [c["elevation_m"] for c in raw_candidates]
         elev_threshold = float(np.percentile(elevs, 30)) if elevs else 0.0
+
+    # Normalise flow accumulation across the candidate set (not the stream cells)
+    accum_vals = [c.get("flow_accum", 0) for c in raw_candidates]
+    min_accum = int(min(accum_vals)) if accum_vals else 0
+    max_accum = int(max(accum_vals)) if accum_vals else 1
 
     scored: list[dict] = []
     for c in raw_candidates:
@@ -121,7 +149,14 @@ def rank_candidates(
         if land_status in _INELIGIBLE_STATUSES:
             continue  # filter out
 
-        t_score = score_terrain(c["slope_deg"], c["elevation_m"], elev_threshold)
+        t_score = score_terrain(
+            c["slope_deg"],
+            c["elevation_m"],
+            elev_threshold,
+            flow_accum=c.get("flow_accum", 0),
+            max_accum=max_accum,
+            min_accum=min_accum,
+        )
         l_score = _LAND_STATUS_SCORE.get(land_status, 0.5)
 
         scored.append(
@@ -134,6 +169,7 @@ def rank_candidates(
             }
         )
 
-    # Sort descending by terrain_score, then land_score as tiebreaker
+    # Sort descending by terrain_score (which now captures slope + elevation +
+    # flow accumulation), then land_score as tiebreaker
     scored.sort(key=lambda x: (x["terrain_score"], x["land_score"]), reverse=True)
     return scored[:max_sites]
