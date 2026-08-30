@@ -19,6 +19,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Optional
+from collections import deque
 
 import numpy as np
 import matplotlib
@@ -77,7 +78,6 @@ async def fetch_dem_grid(
         ).reshape(n_points, n_points)
     except Exception as exc:
         logger.warning("Open Elevation API failed (%s); using synthetic flat DEM", exc)
-        # Fallback: synthetic gently-sloped terrain (keeps tests passing offline)
         elevs = _synthetic_dem(n_points)
 
     return lats, lons, elevs
@@ -106,7 +106,7 @@ def generate_contours_geojson(
     Produce a GeoJSON FeatureCollection of contour lines.
 
     Algorithm: matplotlib.pyplot.contour (marching squares on regular grid).
-    Each contour level → one GeoJSON Feature with LineString geometry.
+    Each contour level -> one GeoJSON Feature with LineString geometry.
     """
     min_e, max_e = float(elevs.min()), float(elevs.max())
     levels = np.arange(
@@ -120,7 +120,6 @@ def generate_contours_geojson(
     plt.close(fig)
 
     features: list[dict] = []
-    # cs.allsegs: list[list[ndarray]]  — outer index = level, inner = disconnected segments
     for level, segments in zip(cs.levels, cs.allsegs):
         for seg in segments:
             if len(seg) < 2:
@@ -139,7 +138,7 @@ def generate_contours_geojson(
     return {"type": "FeatureCollection", "features": features}
 
 
-# ─── Slope & Candidate Cells ───────────────────────────────────────────────────
+# ─── Slope, Flow Accumulation & Candidate Cells ──────────────────────────────
 
 def compute_slope(
     lats: np.ndarray,
@@ -150,12 +149,12 @@ def compute_slope(
     Compute slope in degrees from a regular lat/lon elevation grid.
 
     Method: 2nd-order central differences for interior cells; forward/backward
-    differences at edges.  Horizontal distance between cells is estimated from
+    differences at edges. Horizontal distance between cells is estimated from
     the grid spacing at the mean latitude (flat-earth approximation, accurate
     enough at village scale).
     """
     lat_mean = float(lats.mean())
-    deg_to_m_lat = 111_320.0  # metres per degree latitude
+    deg_to_m_lat = 111_320.0
     deg_to_m_lon = 111_320.0 * np.cos(np.radians(lat_mean))
 
     dlat = float(lats[1] - lats[0]) * deg_to_m_lat if len(lats) > 1 else 1.0
@@ -166,33 +165,160 @@ def compute_slope(
     return np.degrees(slope_rad)
 
 
+from app.geospatial.hydrology_engine import HydrologyEngine
+
+
+def is_stream_channel(
+    accum: np.ndarray,
+    stream_accum_percentile: float = settings.STREAM_ACCUM_PERCENTILE,
+) -> np.ndarray:
+    """
+    Return a boolean mask (same shape as `accum`) where True means the cell
+    is an active stream / river channel.
+
+    Threshold: cells whose flow accumulation exceeds
+    `stream_accum_percentile`-th percentile of the grid are classified as
+    stream channels and are ineligible for pond placement.
+
+    Rationale:
+        A pond built inside a river channel would be immediately flooded,
+        structurally unsafe, and ecologically harmful. The pond location
+        should be at the *margin* of the drainage network, not inside it.
+    """
+    threshold = float(np.percentile(accum, stream_accum_percentile))
+    return accum >= threshold
+
+
 def identify_candidate_cells(
     lats: np.ndarray,
     lons: np.ndarray,
     elevs: np.ndarray,
     slope_threshold_deg: float = settings.SLOPE_THRESHOLD_DEG,
     elevation_low_percentile: float = settings.ELEVATION_LOW_PERCENTILE,
+    stream_accum_percentile: float = settings.STREAM_ACCUM_PERCENTILE,
 ) -> list[dict]:
     """
-    Return candidate pond sites as a list of {lat, lon, elevation_m, slope_deg}.
+    Return candidate pond sites as spatially distinct region representatives.
 
-    Criteria (from plan §4.2):
-      - slope < slope_threshold_deg AND
-      - elevation < elevation_low_percentile-th percentile of the village DEM
+    Algorithm (viva-ready):
+      1. Filter every DEM cell by: slope < threshold AND elevation in the
+         bottom `elevation_low_percentile`-th percentile AND not a stream cell.
+      2. Group qualifying cells into contiguous regions via 4-connectivity
+         BFS flood-fill. Adjacent qualifying cells form one potential pond
+         region (e.g. a valley bottom or flat depression).
+      3. For each region, select the representative cell with the HIGHEST
+         flow accumulation — this is the hydrological convergence point of
+         that region where water naturally gathers most.
+      4. Apply a minimum 500 m spatial-separation filter so the final
+         candidates are spatially distinct and cover different parts of the
+         study area.
+
+    River-exclusion:
+      Cells whose D8 flow accumulation exceeds `stream_accum_percentile` are
+      active stream/river channels and are excluded. A pond inside a river
+      would be immediately flooded and is hydraulically incorrect.
     """
     slope = compute_slope(lats, lons, elevs)
     elev_threshold = float(np.percentile(elevs, elevation_low_percentile))
 
-    candidates: list[dict] = []
-    for i in range(len(lats)):
-        for j in range(len(lons)):
-            if slope[i, j] < slope_threshold_deg and elevs[i, j] < elev_threshold:
-                candidates.append(
-                    {
-                        "lat": float(lats[i]),
-                        "lon": float(lons[j]),
-                        "elevation_m": float(elevs[i, j]),
-                        "slope_deg": float(slope[i, j]),
-                    }
-                )
-    return candidates
+    engine = HydrologyEngine(lats, lons, elevs)
+    engine.process()
+    accum = engine.accum
+    stream_mask = is_stream_channel(accum, stream_accum_percentile)
+
+    # Hydrological criterion: Meaningful drainage paths (e.g., top 25% of flow accum)
+    drainage_threshold = float(np.percentile(accum, 75.0))
+    drainage_mask = accum >= drainage_threshold
+    
+    # Find areas adjacent to meaningful drainage (1-cell dilation)
+    # This allows ponds on the banks of main streams or over minor tributaries.
+    from scipy.ndimage import maximum_filter
+    drainage_vicinity = maximum_filter(drainage_mask, size=3)
+
+    nrows, ncols = len(lats), len(lons)
+
+    # Step 1: Build qualifying-cell boolean grid
+    qualifies = np.zeros((nrows, ncols), dtype=bool)
+    for i in range(nrows):
+        for j in range(ncols):
+            if (
+                slope[i, j] < slope_threshold_deg
+                and elevs[i, j] < elev_threshold
+                and not stream_mask[i, j]
+                and drainage_vicinity[i, j]  # MUST be close to a drainage path
+            ):
+                qualifies[i, j] = True
+
+    # Step 2: BFS flood-fill -> contiguous regions
+    visited = np.zeros((nrows, ncols), dtype=bool)
+    regions: list[list[tuple[int, int]]] = []
+
+    for si in range(nrows):
+        for sj in range(ncols):
+            if not qualifies[si, sj] or visited[si, sj]:
+                continue
+            region: list[tuple[int, int]] = []
+            q: deque = deque([(si, sj)])
+            visited[si, sj] = True
+            while q:
+                ci, cj = q.popleft()
+                region.append((ci, cj))
+                for di, dj in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    ni, nj = ci + di, cj + dj
+                    if (
+                        0 <= ni < nrows
+                        and 0 <= nj < ncols
+                        and qualifies[ni, nj]
+                        and not visited[ni, nj]
+                    ):
+                        visited[ni, nj] = True
+                        q.append((ni, nj))
+            regions.append(region)
+
+    logger.info(
+        "Candidate regions: %d qualifying cells grouped into %d contiguous regions",
+        int(qualifies.sum()), len(regions),
+    )
+
+    # Step 3: Best representative per region
+    # Best = highest flow accumulation (convergence point), tie-break lowest elev.
+    raw_reps: list[dict] = []
+    for region in regions:
+        best = max(region, key=lambda c: (accum[c[0], c[1]], -elevs[c[0], c[1]]))
+        ci, cj = best
+        raw_reps.append({
+            "lat": float(lats[ci]),
+            "lon": float(lons[cj]),
+            "elevation_m": float(elevs[ci, cj]),
+            "slope_deg": float(slope[ci, cj]),
+            "flow_accum": int(accum[ci, cj]),
+            "region_size": len(region),
+            "is_stream": False,
+        })
+
+    # Sort: most hydrologically meaningful first
+    raw_reps.sort(key=lambda c: (-c["flow_accum"], -c["region_size"], c["elevation_m"]))
+
+    # Step 4: Minimum-distance spatial filter (500 m)
+    lat_mean = float(lats.mean())
+    deg_per_m_lat = 1.0 / 111_320.0
+    deg_per_m_lon = 1.0 / (111_320.0 * np.cos(np.radians(lat_mean)))
+
+    accepted: list[dict] = []
+    for cand in raw_reps:
+        too_close = any(
+            np.hypot(
+                (cand["lat"] - prev["lat"]) / deg_per_m_lat,
+                (cand["lon"] - prev["lon"]) / deg_per_m_lon,
+            ) < 500.0
+            for prev in accepted
+        )
+        if not too_close:
+            accepted.append(cand)
+
+    logger.info(
+        "After spatial-diversity filter (500 m): %d distinct candidate regions",
+        len(accepted),
+    )
+
+    return accepted

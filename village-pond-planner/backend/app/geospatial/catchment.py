@@ -1,35 +1,25 @@
 """
 Catchment delineation module.
 
-Algorithm (from plan §4.3):
-  DEM → fill sinks → flow direction (D8) → flow accumulation
-      → outlet point → trace upstream cells → catchment raster
-      → polygonize → compute area
+Algorithm:
+  DEM -> HydrologyEngine (fill sinks, D8 flow direction, flow accumulation)
+      -> Snap outlet to convergence point -> trace upstream cells -> catchment raster
+      -> polygonize -> compute area
 
-Uses pysheds for all hydrology steps — well-tested library, allows explaining
-every step clearly in the viva without maintaining custom D8 code.
-
-Design note:
-  The DEM is passed as a 2-D NumPy array (lat × lon grid).
-  All geometry is returned as GeoJSON for direct serialisation over the API.
+This implementation uses the unified HydrologyEngine to ensure consistency
+with terrain analysis.
 """
 
 from __future__ import annotations
 
 import logging
 from typing import Optional
-
 import numpy as np
 
-logger = logging.getLogger(__name__)
+from app.geospatial.hydrology_engine import HydrologyEngine
+from app.config import settings
 
-try:
-    from pysheds.grid import Grid
-    from pysheds.view import Raster
-    _PYSHEDS_AVAILABLE = True
-except ImportError:
-    _PYSHEDS_AVAILABLE = False
-    logger.warning("pysheds not available — catchment delineation will use fallback approximation")
+logger = logging.getLogger(__name__)
 
 
 # ─── Public API ────────────────────────────────────────────────────────────────
@@ -51,92 +41,103 @@ def delineate_catchment(
         avg_elevation_m   : float
         slope_summary     : str
     """
-    if _PYSHEDS_AVAILABLE:
-        return _delineate_with_pysheds(lats, lons, elevs, outlet_lat, outlet_lon)
-    return _fallback_circular_catchment(lats, lons, elevs, outlet_lat, outlet_lon)
+    logger.info("Delineating catchment using consistent custom NumPy hydrological engine")
+    return _dem_based_catchment(lats, lons, elevs, outlet_lat, outlet_lon)
 
 
-# ─── pysheds Implementation ────────────────────────────────────────────────────
+# ─── NumPy DEM-based Catchment (consistent D8 watershed delineation) ───────────
 
-def _delineate_with_pysheds(
+def _dem_based_catchment(
     lats: np.ndarray,
     lons: np.ndarray,
     elevs: np.ndarray,
     outlet_lat: float,
     outlet_lon: float,
 ) -> dict:
-    """Full D8 catchment delineation using pysheds."""
-    import tempfile, os
-    import rasterio
-    from rasterio.transform import from_bounds
-    from rasterio.features import shapes as rasterio_shapes
-    from shapely.geometry import shape, mapping
+    """
+    Upstream catchment delineation using the unified HydrologyEngine.
+    """
+    from shapely.geometry import box as shapely_box, mapping
     from shapely.ops import unary_union
-    import pyproj
 
-    n_lat, n_lon = elevs.shape
-    transform = from_bounds(
-        lons.min(), lats.min(), lons.max(), lats.max(), n_lon, n_lat
+    nrows, ncols = elevs.shape
+
+    # 1. Process DEM through unified engine
+    engine = HydrologyEngine(lats, lons, elevs)
+    engine.process()
+    
+    accum = engine.accum
+    flow_to = engine.flow_to
+
+    # 2. Outlet snapping: walk downstream to a hydrological convergence
+    stream_threshold = float(np.percentile(accum, settings.STREAM_ACCUM_PERCENTILE))
+    
+    start_i = int(np.argmin(np.abs(lats - outlet_lat)))
+    start_j = int(np.argmin(np.abs(lons - outlet_lon)))
+    
+    snap_i, snap_j = start_i, start_j
+    while True:
+        ri, rj = flow_to[snap_i, snap_j]
+        if ri < 0:
+            break  # Local minimum, nowhere to flow
+            
+        # Criterion 1: Stop just before entering the main stream channel
+        if accum[ri, rj] >= stream_threshold:
+            break
+            
+        # Criterion 2: Stop at a confluence (jump of > 50% and at least 5 cells)
+        if accum[ri, rj] > accum[snap_i, snap_j] * 1.5 + 5:
+            snap_i, snap_j = ri, rj
+            break
+            
+        snap_i, snap_j = ri, rj
+
+    logger.debug(
+        f"Snapped outlet from ({start_i}, {start_j}) to ({snap_i}, {snap_j}). "
+        f"Accumulation: {accum[start_i, start_j]} -> {accum[snap_i, snap_j]}"
     )
 
-    # Write DEM to a temp GeoTIFF so pysheds can read it
-    with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as tmp:
-        tmp_path = tmp.name
+    # 3. BFS upstream trace from snapped outlet cell
+    catchment_cells = engine.trace_upstream(snap_i, snap_j)
 
-    try:
-        with rasterio.open(
-            tmp_path, "w",
-            driver="GTiff",
-            height=n_lat, width=n_lon,
-            count=1, dtype=elevs.dtype,
-            crs="EPSG:4326",
-            transform=transform,
-        ) as dst:
-            dst.write(elevs, 1)
+    if len(catchment_cells) < 3:
+        # Include immediate neighbor cells if very small
+        neighbours = [(-1,-1),(-1,0),(-1,1),(0,-1),(0,1),(1,-1),(1,0),(1,1)]
+        for di, dj in neighbours:
+            ni, nj = snap_i + di, snap_j + dj
+            if 0 <= ni < nrows and 0 <= nj < ncols:
+                catchment_cells.add((ni, nj))
 
-        grid = Grid.from_raster(tmp_path)
-        dem = grid.read_raster(tmp_path)
+    logger.debug(f"Traced catchment contains {len(catchment_cells)} upstream cells.")
 
-        # Step 1: Fill sinks
-        pit_filled = grid.fill_pits(dem)
-        flooded = grid.fill_depressions(pit_filled)
+    # 4. Rasterized Geometry & Smoothing
+    half_dy = (lats[1] - lats[0]) / 2.0 if nrows > 1 else 0.001
+    half_dx = (lons[1] - lons[0]) / 2.0 if ncols > 1 else 0.001
 
-        # Step 2: Flow direction (D8)
-        inflated = grid.resolve_flats(flooded)
-        fdir = grid.flowdir(inflated)
+    boxes = [
+        shapely_box(
+            float(lons[cj]) - half_dx,
+            float(lats[ci]) - half_dy,
+            float(lons[cj]) + half_dx,
+            float(lats[ci]) + half_dy,
+        )
+        for ci, cj in catchment_cells
+    ]
+    catchment_geom = unary_union(boxes)
+    catchment_geom = catchment_geom.buffer(0.0001).buffer(-0.0001).simplify(0.0002)
 
-        # Step 3: Flow accumulation
-        acc = grid.accumulation(fdir)
+    area_m2 = _geodetic_area_m2(catchment_geom)
 
-        # Step 4: Snap outlet to highest-accumulation nearby cell
-        x_snap, y_snap = grid.snap_to_mask(acc > 10, (outlet_lon, outlet_lat))
-
-        # Step 5: Delineate catchment
-        catch = grid.catchment(x=x_snap, y=y_snap, fdir=fdir, xytype="coordinate")
-
-        # Step 6: Polygonize
-        catch_view = grid.view(catch, dtype=np.uint8)
-        polys = [
-            shape(geom)
-            for geom, val in rasterio_shapes(catch_view, transform=grid.affine)
-            if val == 1
-        ]
-        if not polys:
-            raise ValueError("Empty catchment — snapping may have missed outlet")
-
-        catchment_geom = unary_union(polys)
-        area_m2 = _geodetic_area_m2(catchment_geom)
-
-    finally:
-        os.unlink(tmp_path)
-
-    # Elevation stats within catchment bounding box
-    avg_elev = float(np.mean(elevs))  # simplified; full mask would need rasterization
+    # 5. Slope & Elevation Stats
+    cell_elevs = [float(elevs[ci, cj]) for ci, cj in catchment_cells]
+    avg_elev = float(np.mean(cell_elevs))
     slope_arr = _simple_slope(lats, lons, elevs)
+    cell_slopes = [float(slope_arr[ci, cj]) for ci, cj in catchment_cells]
+
     slope_summary = (
-        f"mean {float(slope_arr.mean()):.1f}°, "
-        f"max {float(slope_arr.max()):.1f}°, "
-        f"min {float(slope_arr.min()):.1f}°"
+        f"mean {float(np.mean(cell_slopes)):.1f}°, "
+        f"max {float(np.max(cell_slopes)):.1f}° "
+        f"({len(catchment_cells)} upstream watershed cells)"
     )
 
     return {
@@ -148,8 +149,6 @@ def _delineate_with_pysheds(
     }
 
 
-# ─── Fallback (no pysheds) ────────────────────────────────────────────────────
-
 def _fallback_circular_catchment(
     lats: np.ndarray,
     lons: np.ndarray,
@@ -158,8 +157,8 @@ def _fallback_circular_catchment(
     outlet_lon: float,
 ) -> dict:
     """
-    Approximate catchment as a circle with radius ~1 km when pysheds is unavailable.
-    This is a placeholder for environments without C extensions.
+    Legacy circular approximation — kept for reference.
+    The DEM-based upstream tracing (_dem_based_catchment) is now used instead.
     """
     radius_deg = 0.009  # ≈ 1 km
     n_points = 36
@@ -207,7 +206,6 @@ def _geodetic_area_m2(geom) -> float:
     """Approximate area of a WGS-84 polygon in m² using pyproj."""
     try:
         import pyproj
-        from functools import partial
         from shapely.ops import transform
 
         geod = pyproj.Geod(ellps="WGS84")
