@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+.pytest_cache/
+*.egg-info/
+
+# Environment variables
+.env
+.env.local
+
+# Node & Frontend (frontend added in Phase 2)
+node_modules/
+dist/
+build/
+.npm
+*.log
+
+# OS & IDE
+.DS_Store
+.vscode/
+.idea/

@@ -50,11 +50,19 @@ class Settings(BaseSettings):
     # Slope threshold below which land is "low slope" (degrees)
     SLOPE_THRESHOLD_DEG: float = 5.0
     # Relative-elevation percentile threshold for "low elevation"
-    ELEVATION_LOW_PERCENTILE: float = 30.0
+    # Raised to 40 so we consider a wider band of the terrain including
+    # the valley margins where flow converges (was 30 — too restrictive).
+    ELEVATION_LOW_PERCENTILE: float = 40.0
+    # Flow accumulation percentile above which a cell is treated as a stream/river channel.
+    # Cells exceeding this are excluded from pond candidates (a pond inside a river is invalid).
+    # Raised to 92: only the true top 8% highest-accum cells are rivers.
+    # Was 85 — this incorrectly excluded valley-margin cells that are the BEST pond sites.
+    STREAM_ACCUM_PERCENTILE: float = 92.0
 
     # ─── Land Suitability ──────────────────────────────────────────
-    # Max candidate sites returned per village
-    MAX_CANDIDATE_SITES: int = 5
+    # Max candidate sites returned per village — increased so we have a
+    # large pool to pick the top 3 from after scoring
+    MAX_CANDIDATE_SITES: int = 10
 
     # ─── Runoff / Hydrology ────────────────────────────────────────
     # Rational-method runoff coefficients by land cover type
