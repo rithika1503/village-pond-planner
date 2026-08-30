@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Village Pond & Catchment Visualization</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      display: flex;
+      height: 100vh;
+      background: #0f172a;
+      color: #f8fafc;
+    }
+    #map {
+      flex: 1;
+      height: 100%;
+    }
+    #sidebar {
+      width: 420px;
+      padding: 24px;
+      background: rgba(15, 23, 42, 0.97);
+      backdrop-filter: blur(10px);
+      box-shadow: -4px 0 24px rgba(0,0,0,0.5);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      overflow-y: auto;
+      z-index: 1000;
+    }
+    h1 {
+      font-size: 22px;
+      margin: 0;
+      color: #38bdf8;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .subtitle {
+      font-size: 13px;
+      color: #94a3b8;
+      margin-top: 4px;
+    }
+    .card {
+      background: #1e293b;
+      border-radius: 12px;
+      padding: 16px;
+      border: 1px solid #334155;
+    }
+    .card-title {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #94a3b8;
+      margin-bottom: 12px;
+      font-weight: 600;
+    }
+    .stat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .stat-item {
+      display: flex;
+      flex-direction: column;
+    }
+    .stat-label {
+      font-size: 11px;
+      color: #64748b;
+      margin-bottom: 2px;
+    }
+    .stat-value {
+      font-size: 15px;
+      font-weight: 600;
+      color: #f1f5f9;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 600;
+      background: rgba(16, 185, 129, 0.2);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+    .legend-color {
+      width: 18px;
+      height: 18px;
+      border-radius: 4px;
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="sidebar">
+    <div>
+      <h1>💧 Pond & Catchment Map</h1>
+      <div class="subtitle">Computed from <code>contours_1m.kml</code></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Suitability Assessment</div>
+      <div style="display: flex; align-items: center; justify-content: space-between;">
+        <div>
+          <div class="stat-label">Overall Suitability Score</div>
+          <div class="stat-value" style="font-size: 24px; color: #38bdf8;">0.69 / 1.0</div>
+        </div>
+        <span class="badge">Recommended Site</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Recommended Pond Location</div>
+      <div class="stat-grid">
+        <div class="stat-item">
+          <span class="stat-label">Latitude</span>
+          <span class="stat-value">21.26116°</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Longitude</span>
+          <span class="stat-value">81.28140°</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Elevation</span>
+          <span class="stat-value">276.0 m</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Slope</span>
+          <span class="stat-value">0.0° (Flat)</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Hydrology & Sizing</div>
+      <div class="stat-grid">
+        <div class="stat-item">
+          <span class="stat-label">Catchment Area</span>
+          <span class="stat-value">11.56 ha</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Catchment (m²)</span>
+          <span class="stat-value">115,574 m²</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Est. Runoff Yield</span>
+          <span class="stat-value">84,746 m³</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Pond Excavation Area</span>
+          <span class="stat-value">28,249 m²</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Map Layers</div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #0284c7; border: 2px solid #38bdf8;"></div>
+        <span>Delineated Catchment Basin</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #ef4444; border-radius: 50%;"></div>
+        <span>Pond Excavation Footprint</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: rgba(234, 179, 8, 0.2); border: 2px dashed #eab308;"></div>
+        <span>KML Survey Extent</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const map = L.map('map', {
+      center: [21.2611563, 81.2814045],
+      zoom: 15
+    });
+
+    // Satellite Imagery (Esri)
+    const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      attribution: 'Tiles &copy; Esri',
+      maxZoom: 19
+    }).addTo(map);
+
+    // OpenStreetMap
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{y}/{x}.png', {
+      attribution: '&copy; OpenStreetMap contributors',
+      maxZoom: 19
+    });
+
+    L.control.layers({
+      'Satellite Imagery': satellite,
+      'Street Map': osm
+    }, null, { position: 'topleft' }).addTo(map);
+
+    // Catchment Polygon
+    const catchmentGeojson = {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [81.28108569553925, 21.260426593884105],
+          [81.28170644190058, 21.26047349172291],
+          [81.28172340989175, 21.26139865640123],
+          [81.2829692044177, 21.261428060675506],
+          [81.28299860869198, 21.262368379008638],
+          [81.2842735775874, 21.262368379008638],
+          [81.28433542419657, 21.261891244704078],
+          [81.28554877638761, 21.261883517704934],
+          [81.28554877638761, 21.26091402500231],
+          [81.28365879209436, 21.260877349378333],
+          [81.28368053611639, 21.26044590178498],
+          [81.2842735775874, 21.260428933793815],
+          [81.2842735775874, 21.258974579787488],
+          [81.28306022539634, 21.258966852788344],
+          [81.28299837878717, 21.258489718483784],
+          [81.28172340989175, 21.258489718483784],
+          [81.28168673426777, 21.25895176588043],
+          [81.28108581049165, 21.258974579787488],
+          [81.28108569553925, 21.260426593884105]
+        ]
+      ]
+    };
+
+    const catchmentLayer = L.geoJSON(catchmentGeojson, {
+      style: {
+        color: '#38bdf8',
+        weight: 3,
+        opacity: 0.9,
+        fillColor: '#0284c7',
+        fillOpacity: 0.45
+      }
+    }).addTo(map);
+
+    // Survey Bounding Box
+    const bboxBounds = [
+      [21.2398224433387, 81.2814044952393],
+      [21.2635806472203, 81.3126468658447]
+    ];
+    L.rectangle(bboxBounds, {
+      color: '#eab308',
+      weight: 2,
+      dashArray: '6, 6',
+      fill: false
+    }).addTo(map);
+
+    // Pond Excavation Footprint
+    const pondCircle = L.circle([21.2611563, 81.2814045], {
+      radius: Math.sqrt(28248.52 / Math.PI), // ~94.8m radius
+      color: '#ef4444',
+      weight: 2,
+      fillColor: '#f87171',
+      fillOpacity: 0.75
+    }).addTo(map);
+
+    // Pond Marker & Popup
+    const pondMarker = L.marker([21.2611563, 81.2814045]).addTo(map);
+    pondMarker.bindPopup(`
+      <div style="color: #0f172a; font-family: sans-serif;">
+        <h3 style="margin: 0 0 6px 0; color: #0284c7;">Optimal Pond Location</h3>
+        <b>Latitude:</b> 21.26116°<br/>
+        <b>Longitude:</b> 81.28140°<br/>
+        <b>Elevation:</b> 276.0 m<br/>
+        <b>Slope:</b> 0.0° (Flat terrain)<br/>
+        <b>Catchment Area:</b> 11.56 ha (115,574 m²)<br/>
+        <b>Suitability Score:</b> 0.69 / 1.0
+      </div>
+    `).openPopup();
+
+    map.fitBounds(catchmentLayer.getBounds(), { padding: [50, 50] });
+  </script>
+</body>
+</html>

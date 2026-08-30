@@ -1,0 +1,163 @@
+{
+  "elevation_range_m": {
+    "min": 267.0,
+    "max": 298.0,
+    "mean": 284.27749077490773,
+    "unique_levels": [
+      267.0,
+      268.0,
+      269.0,
+      270.0,
+      271.0,
+      272.0,
+      273.0,
+      274.0,
+      275.0,
+      276.0,
+      277.0,
+      278.0,
+      279.0,
+      280.0,
+      281.0,
+      282.0,
+      283.0,
+      284.0,
+      285.0,
+      286.0,
+      287.0,
+      288.0,
+      289.0,
+      290.0,
+      291.0,
+      292.0,
+      293.0,
+      294.0,
+      295.0,
+      296.0,
+      297.0,
+      298.0
+    ]
+  },
+  "contour_count": 2710,
+  "bounding_box": {
+    "min_lat": 21.2398224433387,
+    "max_lat": 21.2635806472203,
+    "min_lon": 81.2814044952393,
+    "max_lon": 81.3126468658447
+  },
+  "pond_location": {
+    "lat": 21.2611563,
+    "lon": 81.2814045,
+    "elevation_m": 276.0,
+    "slope_deg": 0.0,
+    "land_status": "government"
+  },
+  "catchment_area_m2": 115573.7,
+  "catchment_area_ha": 11.56,
+  "catchment_geometry": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [
+          81.28108569553925,
+          21.260426593884105
+        ],
+        [
+          81.28170644190058,
+          21.26047349172291
+        ],
+        [
+          81.28172340989175,
+          21.26139865640123
+        ],
+        [
+          81.2829692044177,
+          21.261428060675506
+        ],
+        [
+          81.28299860869198,
+          21.262368379008638
+        ],
+        [
+          81.2842735775874,
+          21.262368379008638
+        ],
+        [
+          81.28433542419657,
+          21.261891244704078
+        ],
+        [
+          81.28554877638761,
+          21.261883517704934
+        ],
+        [
+          81.28554877638761,
+          21.26091402500231
+        ],
+        [
+          81.28365879209436,
+          21.260877349378333
+        ],
+        [
+          81.28368053611639,
+          21.26044590178498
+        ],
+        [
+          81.2842735775874,
+          21.260428933793815
+        ],
+        [
+          81.2842735775874,
+          21.258974579787488
+        ],
+        [
+          81.28306022539634,
+          21.258966852788344
+        ],
+        [
+          81.28299837878717,
+          21.258489718483784
+        ],
+        [
+          81.28172340989175,
+          21.258489718483784
+        ],
+        [
+          81.28168673426777,
+          21.25895176588043
+        ],
+        [
+          81.28108581049165,
+          21.258974579787488
+        ],
+        [
+          81.28108569553925,
+          21.260426593884105
+        ]
+      ]
+    ]
+  },
+  "annual_rainfall_mm": 1333.2,
+  "runoff_volume_m3": 84745.57,
+  "runoff_coefficient": 0.55,
+  "pond_depth_m": 3.0,
+  "pond_surface_area_m2": 28248.52,
+  "pond_storage_capacity_m3": 84745.57,
+  "suitability_score": 0.6895,
+  "score_breakdown": {
+    "terrain_score": 1.0,
+    "catchment_score": 0.0578,
+    "rainfall_score": 0.861,
+    "land_score": 1.0,
+    "total_score": 0.6895,
+    "weights": {
+      "terrain": 0.3,
+      "catchment": 0.3,
+      "rainfall": 0.2,
+      "land": 0.2
+    }
+  },
+  "slope_summary": "mean 2.1\u00b0, max 5.8\u00b0 (32 upstream watershed cells)",
+  "avg_elevation_m": 275.4,
+  "method_notes": "Terrain reconstructed from KML contour lines via scipy.griddata (Delaunay linear interpolation). Catchment delineated using the D8 flow-direction algorithm (pysheds). Runoff estimated with the Rational Method (V = P \u00d7 A \u00d7 C, C = 0.55). Rainfall: Open-Meteo (9 yr avg)."
+}
