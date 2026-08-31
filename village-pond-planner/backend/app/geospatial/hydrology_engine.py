@@ -34,28 +34,49 @@ class HydrologyEngine:
         self._compute_flow_accumulation()
 
     def _fill_depressions(self) -> None:
-        """Fill pits / depressions to resolve micro-sinks."""
-        self.filled = self.elevs.copy().astype(float)
-        for _ in range(40):
-            changed = False
-            for i in range(1, self.nrows - 1):
-                for j in range(1, self.ncols - 1):
-                    min_nb = min(
-                        self.filled[i - 1, j - 1], self.filled[i - 1, j], self.filled[i - 1, j + 1],
-                        self.filled[i,     j - 1],                        self.filled[i,     j + 1],
-                        self.filled[i + 1, j - 1], self.filled[i + 1, j], self.filled[i + 1, j + 1],
-                    )
-                    if self.filled[i, j] < min_nb:
-                        self.filled[i, j] = min_nb + 1e-4
-                        changed = True
-            if not changed:
-                break
+        """
+        Fill pits / depressions to resolve sinks using a Priority-Queue based 
+        Spill-Elevation algorithm (similar to Wang & Liu).
+        This guarantees every cell has a continuously decreasing path to the grid boundary.
+        """
+        import heapq
+        
+        self.filled = np.full((self.nrows, self.ncols), np.inf, dtype=float)
+        visited = np.zeros((self.nrows, self.ncols), dtype=bool)
+        pq = []
+        
+        # Push all boundary cells into the Priority Queue
+        for i in range(self.nrows):
+            for j in [0, self.ncols - 1]:
+                self.filled[i, j] = float(self.elevs[i, j])
+                heapq.heappush(pq, (self.filled[i, j], i, j))
+                visited[i, j] = True
+                
+        for j in range(1, self.ncols - 1):
+            for i in [0, self.nrows - 1]:
+                self.filled[i, j] = float(self.elevs[i, j])
+                heapq.heappush(pq, (self.filled[i, j], i, j))
+                visited[i, j] = True
+                
+        # Process the queue from lowest to highest
+        neighbours = [(-1,-1), (-1,0), (-1,1), (0,-1), (0,1), (1,-1), (1,0), (1,1)]
+        while pq:
+            z, r, c = heapq.heappop(pq)
+            for dr, dc in neighbours:
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < self.nrows and 0 <= nc < self.ncols and not visited[nr, nc]:
+                    visited[nr, nc] = True
+                    # The filled elevation is the max of the neighbor's original elev 
+                    # and the current cell's spill elevation (+ a tiny epsilon to enforce flow).
+                    spill_elev = max(float(self.elevs[nr, nc]), z + 1e-4)
+                    self.filled[nr, nc] = spill_elev
+                    heapq.heappush(pq, (spill_elev, nr, nc))
 
     def _compute_flow_direction(self) -> None:
         """Compute D8 flow direction pointers using geographical distances."""
         lat_mean = float(self.lats.mean())
-        dy = float(self.lats[1] - self.lats[0]) * 111_320.0 if self.nrows > 1 else 1.0
-        dx = (float(self.lons[1] - self.lons[0]) * 111_320.0 * np.cos(np.radians(lat_mean))
+        dy = abs(float(self.lats[1] - self.lats[0])) * 111_320.0 if self.nrows > 1 else 1.0
+        dx = (abs(float(self.lons[1] - self.lons[0])) * 111_320.0 * np.cos(np.radians(lat_mean))
               if self.ncols > 1 else 1.0)
 
         neighbours = [(-1,-1),(-1,0),(-1,1),(0,-1),(0,1),(1,-1),(1,0),(1,1)]

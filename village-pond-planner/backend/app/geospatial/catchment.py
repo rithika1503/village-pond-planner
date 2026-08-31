@@ -71,6 +71,8 @@ def _dem_based_catchment(
 
     # 2. Outlet snapping: walk downstream to a hydrological convergence
     stream_threshold = float(np.percentile(accum, settings.STREAM_ACCUM_PERCENTILE))
+    max_accum = int(np.max(accum))
+    logger.info(f"Stream threshold (p{settings.STREAM_ACCUM_PERCENTILE}): {stream_threshold:.1f}. Max accumulation: {max_accum}")
     
     start_i = int(np.argmin(np.abs(lats - outlet_lat)))
     start_j = int(np.argmin(np.abs(lons - outlet_lon)))
@@ -81,8 +83,9 @@ def _dem_based_catchment(
         if ri < 0:
             break  # Local minimum, nowhere to flow
             
-        # Criterion 1: Stop just before entering the main stream channel
+        # Criterion 1: Move ONTO the cell crossing the stream threshold, then stop
         if accum[ri, rj] >= stream_threshold:
+            snap_i, snap_j = ri, rj
             break
             
         # Criterion 2: Stop at a confluence (jump of > 50% and at least 5 cells)
@@ -92,7 +95,7 @@ def _dem_based_catchment(
             
         snap_i, snap_j = ri, rj
 
-    logger.debug(
+    logger.info(
         f"Snapped outlet from ({start_i}, {start_j}) to ({snap_i}, {snap_j}). "
         f"Accumulation: {accum[start_i, start_j]} -> {accum[snap_i, snap_j]}"
     )
@@ -108,7 +111,7 @@ def _dem_based_catchment(
             if 0 <= ni < nrows and 0 <= nj < ncols:
                 catchment_cells.add((ni, nj))
 
-    logger.debug(f"Traced catchment contains {len(catchment_cells)} upstream cells.")
+    logger.info(f"Traced catchment contains {len(catchment_cells)} upstream cells.")
 
     # 4. Rasterized Geometry & Smoothing
     half_dy = (lats[1] - lats[0]) / 2.0 if nrows > 1 else 0.001
@@ -127,6 +130,8 @@ def _dem_based_catchment(
     catchment_geom = catchment_geom.buffer(0.0001).buffer(-0.0001).simplify(0.0002)
 
     area_m2 = _geodetic_area_m2(catchment_geom)
+    area_ha = area_m2 / 10_000.0
+    logger.info(f"Final delineated catchment area: {area_ha:.2f} ha ({area_m2:.1f} m²)")
 
     # 5. Slope & Elevation Stats
     cell_elevs = [float(elevs[ci, cj]) for ci, cj in catchment_cells]

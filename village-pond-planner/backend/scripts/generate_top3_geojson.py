@@ -139,6 +139,8 @@ async def main():
                     }
                 })
                 
+                print(f"    -> Catchment Area: {catchment['area_ha']} ha")
+                
             except Exception as e:
                 print(f"  Failed to delineate catchment for Candidate {rank}: {e}")
                 continue
