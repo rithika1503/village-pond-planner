@@ -74,18 +74,17 @@ async def main():
                  raw_candidates = [min(raw_candidates, key=lambda c: c["elevation_m"])]
 
     ranked = rank_candidates(raw_candidates, max_sites=10)
-    candidates_to_process = ranked[:10] if ranked else raw_candidates[:10]
-    
-    features = []
+    sorted_candidates = ranked if ranked else raw_candidates
     
     # ── Add Contour Lines to GeoJSON ──
     print("Adding contour lines to output...")
     elevations = [elev for elev, _ in contour_lines]
     min_elev, max_elev = min(elevations), max(elevations)
     
+    contour_features = []
     for elev, coords in contour_lines:
         norm = (elev - min_elev) / (max_elev - min_elev) if max_elev > min_elev else 0.5
-        features.append({
+        contour_features.append({
             "type": "Feature",
             "geometry": {
                 "type": "LineString",
@@ -113,84 +112,108 @@ async def main():
         {"fill": "#ff4500", "pond": "#e64a19"},  # 10: Deep Orange
     ]
 
-    print(f"Delineating catchments for top {len(candidates_to_process)} candidates...")
-    for idx, cand in enumerate(candidates_to_process):
-        rank = idx + 1
-        colors = palette[idx % len(palette)]
-        print(f"  Processing Candidate {rank}...")
-        try:
-            catchment = delineate_catchment(lats, lons, elevs, cand["lat"], cand["lon"])
+    def generate_geojson(top_n: int, out_path: str):
+        candidates_to_process = sorted_candidates[:top_n]
+        features = list(contour_features) # start with contours
+        
+        print(f"\nDelineating catchments for top {len(candidates_to_process)} candidates to {out_path}...")
+        for idx, cand in enumerate(candidates_to_process):
+            rank = idx + 1
+            colors = palette[idx % len(palette)]
+            print(f"  Processing Candidate {rank}...")
+            try:
+                catchment = delineate_catchment(lats, lons, elevs, cand["lat"], cand["lon"])
+                
+                # Catchment Polygon Feature
+                features.append({
+                    "type": "Feature",
+                    "geometry": catchment["geometry_geojson"],
+                    "properties": {
+                        "name": f"Candidate {rank} Catchment",
+                        "rank": rank,
+                        "area_ha": catchment["area_ha"],
+                        "fill": colors["fill"],
+                        "fill-opacity": 0.35,
+                        "stroke": "#1a2b3c",
+                        "stroke-width": 3
+                    }
+                })
+                
+            except Exception as e:
+                print(f"  Failed to delineate catchment for Candidate {rank}: {e}")
+                continue
+                
+            # Calculate Pond Size
+            runoff = estimate_runoff_volume(catchment["area_m2"], 800.0, "default")
+            pond = size_pond(runoff["runoff_volume_m3"], 3.0)
+            area_m2 = pond["pond_surface_area_m2"]
             
-            # Catchment Polygon Feature
+            # Draw SQUARE border for the pond (plot of land)
+            side_m = math.sqrt(area_m2)
+            half_side_m = side_m / 2.0
+            
+            # Convert meters to degrees
+            dy_deg = half_side_m / 111320.0
+            dx_deg = half_side_m / (111320.0 * math.cos(math.radians(cand["lat"])))
+            
+            square_coords = [
+                [cand["lon"] - dx_deg, cand["lat"] + dy_deg], # Top-Left
+                [cand["lon"] + dx_deg, cand["lat"] + dy_deg], # Top-Right
+                [cand["lon"] + dx_deg, cand["lat"] - dy_deg], # Bottom-Right
+                [cand["lon"] - dx_deg, cand["lat"] - dy_deg], # Bottom-Left
+                [cand["lon"] - dx_deg, cand["lat"] + dy_deg]  # Close ring
+            ]
+            
+            # 1. Pond Border Polygon
             features.append({
                 "type": "Feature",
-                "geometry": catchment["geometry_geojson"],
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [square_coords]
+                },
                 "properties": {
-                    "name": f"Candidate {rank} Catchment",
+                    "name": f"Candidate {rank} Excavation Border ({area_m2:.1f} m²)",
                     "rank": rank,
-                    "area_ha": catchment["area_ha"],
-                    "fill": colors["fill"],
-                    "fill-opacity": 0.35,
-                    "stroke": "#1a2b3c",
+                    "elevation_m": cand.get("elevation_m"),
+                    "fill": colors["pond"],
+                    "fill-opacity": 0.8,
+                    "stroke": "#000000",
                     "stroke-width": 3
                 }
             })
-            
-        except Exception as e:
-            print(f"  Failed to delineate catchment for Candidate {rank}: {e}")
-            continue
-            
-        # Calculate Pond Size
-        runoff = estimate_runoff_volume(catchment["area_m2"], 800.0, "default")
-        pond = size_pond(runoff["runoff_volume_m3"], 3.0)
-        area_m2 = pond["pond_surface_area_m2"]
-        
-        # Draw SQUARE border for the pond (plot of land)
-        side_m = math.sqrt(area_m2)
-        half_side_m = side_m / 2.0
-        
-        # Convert meters to degrees
-        dy_deg = half_side_m / 111320.0
-        dx_deg = half_side_m / (111320.0 * math.cos(math.radians(cand["lat"])))
-        
-        square_coords = [
-            [cand["lon"] - dx_deg, cand["lat"] + dy_deg], # Top-Left
-            [cand["lon"] + dx_deg, cand["lat"] + dy_deg], # Top-Right
-            [cand["lon"] + dx_deg, cand["lat"] - dy_deg], # Bottom-Right
-            [cand["lon"] - dx_deg, cand["lat"] - dy_deg], # Bottom-Left
-            [cand["lon"] - dx_deg, cand["lat"] + dy_deg]  # Close ring
-        ]
-        
-        features.append({
-            "type": "Feature",
-            "geometry": {
-                "type": "Polygon",
-                "coordinates": [square_coords]
-            },
-            "properties": {
-                "name": f"Candidate {rank} Excavation Border ({area_m2:.1f} m²)",
-                "rank": rank,
-                "elevation_m": cand.get("elevation_m"),
-                "fill": colors["pond"],
-                "fill-opacity": 0.8,
-                "stroke": "#000000",
-                "stroke-width": 3
-            }
-        })
-        
-    geojson = {
-        "type": "FeatureCollection",
-        "features": features
-    }
-    
-    with open(out_geojson_path, "w") as f:
-        json.dump(geojson, f, indent=2)
 
-    with open("../top10_visualization.geojson", "w") as f:
-        json.dump(geojson, f, indent=2)
+            # 2. Pond Pin Point
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [cand["lon"], cand["lat"]]
+                },
+                "properties": {
+                    "name": f"Candidate {rank} Pin",
+                    "rank": rank,
+                    "elevation_m": cand.get("elevation_m"),
+                    "marker-color": colors["pond"],
+                    "marker-size": "large",
+                    "marker-symbol": "water"
+                }
+            })
+            
+        geojson = {
+            "type": "FeatureCollection",
+            "features": features
+        }
         
-    print(f"\nSuccess! Visualisation saved to {out_geojson_path} and ../top10_visualization.geojson")
-    print("You can open this file in QGIS or paste its contents into https://geojson.io")
+        with open(out_path, "w") as f:
+            json.dump(geojson, f, indent=2)
+            
+        print(f"  -> Saved to {out_path}")
+
+    # Generate both files
+    generate_geojson(3, "../top3_visualization.geojson")
+    generate_geojson(10, "../top10_visualization.geojson")
+    
+    print("\nSuccess! You can open these files in QGIS or paste their contents into https://geojson.io")
 
 if __name__ == "__main__":
     asyncio.run(main())

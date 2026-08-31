@@ -128,14 +128,12 @@ async def main():
     score = compute_suitability_score(
         terrain_score=best.get("terrain_score", 0.5),
         catchment_area_m2=catchment["area_m2"],
-        annual_rainfall_mm=annual_rainfall_mm,
         land_score=best.get("land_score", 0.5),
     )
     print(f"-> Total Suitability Score: {score['total_score']:.3f} (out of 1.0)")
     print(f"-> Breakdown:")
     print(f"     Terrain Score: {score['terrain_score']:.3f} (weight {score['weights']['terrain']})")
     print(f"     Catchment Score: {score['catchment_score']:.3f} (weight {score['weights']['catchment']})")
-    print(f"     Rainfall Score: {score['rainfall_score']:.3f} (weight {score['weights']['rainfall']})")
     print(f"     Land Availability: {score['land_score']:.3f} (weight {score['weights']['land']})")
     print("\n")
 
