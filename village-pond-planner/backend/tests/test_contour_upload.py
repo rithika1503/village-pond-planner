@@ -284,14 +284,17 @@ class TestRiverExclusionEdgeCase:
 
         import numpy as np
         from app.geospatial.kml_parser import parse_kml_bytes, contours_to_dem
-        from app.geospatial.terrain import compute_flow_accumulation, is_stream_channel
+        from app.geospatial.terrain import is_stream_channel
+        from app.geospatial.hydrology_engine import HydrologyEngine
         from app.config import settings
 
         kml_bytes = SAMPLE_KML.read_bytes()
         contour_lines = parse_kml_bytes(kml_bytes)
         lats, lons, elevs = contours_to_dem(contour_lines, n_points=50)
 
-        accum = compute_flow_accumulation(elevs)
+        engine = HydrologyEngine(lats, lons, elevs)
+        engine.process()
+        accum = engine.accum
         stream_mask = is_stream_channel(accum, settings.STREAM_ACCUM_PERCENTILE)
 
         # Get the pond location from the API
@@ -328,7 +331,8 @@ class TestRiverExclusionEdgeCase:
             - maximum at top corners (i=0, j=0 and j=9) → ridge
         """
         import numpy as np
-        from app.geospatial.terrain import compute_flow_accumulation, is_stream_channel
+        from app.geospatial.terrain import is_stream_channel
+        from app.geospatial.hydrology_engine import HydrologyEngine
 
         size = 10
         centre_j = (size - 1) / 2.0  # 4.5
@@ -346,7 +350,11 @@ class TestRiverExclusionEdgeCase:
             "Synthetic DEM sanity check: valley bottom must be lower than ridge top"
         )
 
-        accum = compute_flow_accumulation(elevs)
+        lats = np.linspace(10.0, 10.1, size)
+        lons = np.linspace(70.0, 70.1, size)
+        engine = HydrologyEngine(lats, lons, elevs)
+        engine.process()
+        accum = engine.accum
 
         # The bottom-row centre cells collect water from the whole valley
         bottom_centre_accum = int(accum[size - 1, size // 2 - 1])  # j=4

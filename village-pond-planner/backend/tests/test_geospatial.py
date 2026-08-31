@@ -86,7 +86,6 @@ class TestScoring:
         result = compute_suitability_score(
             terrain_score=1.0,
             catchment_area_m2=2_000_000,  # 200 ha → C score = 1.0
-            annual_rainfall_mm=1500,       # → R score = 1.0
             land_score=1.0,
         )
         assert result["total_score"] == pytest.approx(1.0, abs=0.01)
@@ -96,16 +95,15 @@ class TestScoring:
         result = compute_suitability_score(
             terrain_score=0.0,
             catchment_area_m2=0.0,
-            annual_rainfall_mm=0.0,
             land_score=0.0,
         )
         assert result["total_score"] == pytest.approx(0.0)
 
     def test_weights_sum_one(self):
         from app.geospatial.scoring import compute_suitability_score
-        result = compute_suitability_score(0.5, 100_000, 800, 0.7)
+        result = compute_suitability_score(0.5, 100_000, 0.7)
         w = result["weights"]
-        total_w = w["terrain"] + w["catchment"] + w["rainfall"] + w["land"]
+        total_w = w["terrain"] + w["catchment"] + w["land"]
         assert abs(total_w - 1.0) < 0.01
 
     def test_rainfall_normalisation(self):

@@ -1022,54 +1022,34 @@ class TestStep11SuitabilityScoring:
         result = compute_suitability_score(
             terrain_score=1.0,
             catchment_area_m2=2_000_000,
-            annual_rainfall_mm=1500,
             land_score=1.0,
         )
         assert result["total_score"] == pytest.approx(1.0, abs=0.01)
 
     def test_zero_conditions_give_score_zero(self):
         from app.geospatial.scoring import compute_suitability_score
-        result = compute_suitability_score(0.0, 0.0, 0.0, 0.0)
+        result = compute_suitability_score(0.0, 0.0, 0.0)
         assert result["total_score"] == pytest.approx(0.0)
 
     def test_total_score_in_unit_range(self):
         from app.geospatial.scoring import compute_suitability_score
-        result = compute_suitability_score(0.5, 500_000, 800, 0.7)
+        result = compute_suitability_score(0.5, 500_000, 0.7)
         assert 0.0 <= result["total_score"] <= 1.0
 
     def test_weights_sum_to_one(self):
         from app.geospatial.scoring import compute_suitability_score
-        result = compute_suitability_score(0.5, 100_000, 700, 0.6)
+        result = compute_suitability_score(0.5, 100_000, 0.6)
         w = result["weights"]
-        assert abs(w["terrain"] + w["catchment"] + w["rainfall"] + w["land"] - 1.0) < 0.01
+        assert abs(w["terrain"] + w["catchment"] + w["land"] - 1.0) < 0.01
 
     def test_subscores_present_in_result(self):
         from app.geospatial.scoring import compute_suitability_score
-        result = compute_suitability_score(0.5, 100_000, 700, 0.6)
-        for k in ("terrain_score", "catchment_score", "rainfall_score",
+        result = compute_suitability_score(0.5, 100_000, 0.6)
+        for k in ("terrain_score", "catchment_score",
                    "land_score", "total_score", "weights"):
             assert k in result
 
-    def test_higher_rainfall_raises_score(self):
-        from app.geospatial.scoring import compute_suitability_score
-        low = compute_suitability_score(0.5, 100_000, 300, 0.5)
-        high = compute_suitability_score(0.5, 100_000, 1200, 0.5)
-        assert high["total_score"] > low["total_score"]
 
-    def test_higher_catchment_raises_score(self):
-        from app.geospatial.scoring import compute_suitability_score
-        small = compute_suitability_score(0.5, 10_000, 800, 0.5)
-        large = compute_suitability_score(0.5, 1_000_000, 800, 0.5)
-        assert large["total_score"] > small["total_score"]
-
-    def test_normalise_rainfall_arid(self):
-        from app.geospatial.scoring import normalise_rainfall_score
-        assert normalise_rainfall_score(0) == 0.0
-        assert normalise_rainfall_score(300) == pytest.approx(0.0)
-
-    def test_normalise_rainfall_max_clamped(self):
-        from app.geospatial.scoring import normalise_rainfall_score
-        assert normalise_rainfall_score(10_000) == pytest.approx(1.0)
 
     def test_normalise_catchment_zero_area(self):
         from app.geospatial.scoring import normalise_catchment_score
