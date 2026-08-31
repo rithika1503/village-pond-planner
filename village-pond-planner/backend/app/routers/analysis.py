@@ -164,7 +164,6 @@ async def analysis_full(
     score_result = compute_suitability_score(
         terrain_score=terrain_score,
         catchment_area_m2=catchment_result["area_m2"],
-        annual_rainfall_mm=annual_rainfall_mm,
         land_score=land_score,
     )
 

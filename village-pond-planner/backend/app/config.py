@@ -72,11 +72,10 @@ class Settings(BaseSettings):
     RUNOFF_COEFF_DEFAULT: float = 0.45
 
     # ─── Suitability Scoring Weights ───────────────────────────────
-    # S = w_terrain·T + w_catchment·C + w_rainfall·R + w_land·L
+    # S = w_terrain·T + w_catchment·C + w_land·L
     # Must sum to 1.0
-    WEIGHT_TERRAIN: float = 0.30
-    WEIGHT_CATCHMENT: float = 0.30
-    WEIGHT_RAINFALL: float = 0.20
+    WEIGHT_TERRAIN: float = 0.40
+    WEIGHT_CATCHMENT: float = 0.40
     WEIGHT_LAND: float = 0.20
 
     # ─── Pond Sizing Limits ────────────────────────────────────────

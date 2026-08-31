@@ -200,7 +200,7 @@ async def _analyze_contour(
             cand_catchment = delineate_catchment(lats, lons, elevs, cand_lat, cand_lon)
             cand_runoff = estimate_runoff_volume(cand_catchment["area_m2"], annual_rainfall_mm, land_cover)
             cand_pond = size_pond(cand_runoff["runoff_volume_m3"], desired_depth_m)
-            cand_score = compute_suitability_score(t_score, cand_catchment["area_m2"], annual_rainfall_mm, l_score)
+            cand_score = compute_suitability_score(t_score, cand_catchment["area_m2"], l_score)
             
             # Generate Pond Border GeoJSON (circle)
             cand_area = cand_pond["pond_surface_area_m2"]
@@ -274,7 +274,6 @@ async def _analyze_contour(
     score = compute_suitability_score(
         terrain_score=terrain_score,
         catchment_area_m2=catchment["area_m2"],
-        annual_rainfall_mm=annual_rainfall_mm,
         land_score=land_score,
     )
 
