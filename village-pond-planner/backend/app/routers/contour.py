@@ -185,18 +185,11 @@ async def _analyze_contour(
     terrain_score = best.get("terrain_score", 0.5)
     land_score = best.get("land_score", 0.5)
 
-    # ── 6. Rainfall (moved up to be reused for all candidates) ────────────────
+    # ── 6. Rainfall (default to 800mm if not provided) ────────────────────────
     rainfall_source = "provided"
     if annual_rainfall_mm is None:
-        try:
-            from app.services.rainfall_service import fetch_rainfall
-            rainfall_data = await fetch_rainfall(centroid_lat, centroid_lon)
-            annual_rainfall_mm = rainfall_data["annual_mean_mm"]
-            rainfall_source = f"Open-Meteo ({rainfall_data.get('years', '?')} yr avg)"
-        except Exception as exc:
-            logger.warning("Rainfall fetch failed (%s); using default 800 mm", exc)
-            annual_rainfall_mm = 800.0
-            rainfall_source = "default (800 mm — rainfall API unavailable)"
+        annual_rainfall_mm = 800.0
+        rainfall_source = "default (800 mm)"
 
     # ── 7. Top Candidates details ──────────────────────────────────────────────
     top_candidates_list = []
