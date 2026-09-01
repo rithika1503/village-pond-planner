@@ -150,39 +150,7 @@ async def main():
             pond = size_pond(runoff["runoff_volume_m3"], 3.0)
             area_m2 = pond["pond_surface_area_m2"]
             
-            # Draw SQUARE border for the pond (plot of land)
-            side_m = math.sqrt(area_m2)
-            half_side_m = side_m / 2.0
-            
-            # Convert meters to degrees
-            dy_deg = half_side_m / 111320.0
-            dx_deg = half_side_m / (111320.0 * math.cos(math.radians(cand["lat"])))
-            
-            square_coords = [
-                [cand["lon"] - dx_deg, cand["lat"] + dy_deg], # Top-Left
-                [cand["lon"] + dx_deg, cand["lat"] + dy_deg], # Top-Right
-                [cand["lon"] + dx_deg, cand["lat"] - dy_deg], # Bottom-Right
-                [cand["lon"] - dx_deg, cand["lat"] - dy_deg], # Bottom-Left
-                [cand["lon"] - dx_deg, cand["lat"] + dy_deg]  # Close ring
-            ]
-            
-            # 1. Pond Border Polygon
-            features.append({
-                "type": "Feature",
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [square_coords]
-                },
-                "properties": {
-                    "name": f"Candidate {rank} Excavation Border ({area_m2:.1f} m²)",
-                    "rank": rank,
-                    "elevation_m": cand.get("elevation_m"),
-                    "fill": colors["pond"],
-                    "fill-opacity": 0.8,
-                    "stroke": "#000000",
-                    "stroke-width": 3
-                }
-            })
+            # (Removed physical pond square borders to reduce visual noise on the map)
 
             # 2. Pond Pin Point
             features.append({

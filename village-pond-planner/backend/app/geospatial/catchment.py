@@ -129,6 +129,11 @@ def _dem_based_catchment(
     catchment_geom = unary_union(boxes)
     catchment_geom = catchment_geom.buffer(0.0001).buffer(-0.0001).simplify(0.0002)
 
+    # Filter out any tiny detached "noisy" cells/polygons
+    if catchment_geom.geom_type == 'MultiPolygon':
+        # Keep only the largest contiguous polygon
+        catchment_geom = max(catchment_geom.geoms, key=lambda p: p.area)
+
     area_m2 = _geodetic_area_m2(catchment_geom)
     area_ha = area_m2 / 10_000.0
     logger.info(f"Final delineated catchment area: {area_ha:.2f} ha ({area_m2:.1f} m²)")
