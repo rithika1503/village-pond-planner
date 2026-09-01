@@ -59,7 +59,7 @@ router = APIRouter(tags=["contour"])
 # ─── Shared handler ────────────────────────────────────────────────────────────
 
 async def _analyze_contour(
-    file: UploadFile,
+    contour_map: UploadFile,
     land_cover: str,
     desired_depth_m: float,
     annual_rainfall_mm: Optional[float],
@@ -68,7 +68,7 @@ async def _analyze_contour(
     Core pipeline: parse KML/KMZ → derive terrain → catchment → pond sizing.
     """
     # ── 1. Read file ──────────────────────────────────────────────────────────
-    raw = await file.read()
+    raw = await contour_map.read()
     if not raw:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
@@ -353,25 +353,16 @@ async def _analyze_contour(
 @router.post(
     "/analyzeContour",
     response_model=ContourUploadResponse,
-    summary="Analyze KML/KMZ contour map and return catchment information",
-    description=(
-        "Upload a KML or KMZ contour map. The API parses contour lines, "
-        "interpolates a DEM, identifies the optimal pond location, delineates "
-        "the upstream catchment, estimates runoff, and sizes the pond — all "
-        "derived from the uploaded file with no hard-coded data."
-    ),
+    summary="Analyze Contour Map and Identify Pond Candidates",
 )
 async def analyze_contour(
-    file: UploadFile = File(
+    contour_map: UploadFile = File(
         ...,
-        description="KML or KMZ contour map file",
+        description="KML or KMZ contour map file containing elevation polyline data",
     ),
     land_cover: str = Form(
-        default="default",
-        description=(
-            "Land cover type for runoff coefficient. "
-            "One of: vegetated, agricultural, built_up, default"
-        ),
+        "agricultural",
+        description="Type of land cover for runoff estimation: 'vegetated', 'agricultural', 'built_up'",
     ),
     desired_depth_m: float = Form(
         default=3.0,
@@ -389,7 +380,7 @@ async def analyze_contour(
         le=10000,
     ),
 ):
-    return await _analyze_contour(file, land_cover, desired_depth_m, annual_rainfall_mm)
+    return await _analyze_contour(contour_map, land_cover, desired_depth_m, annual_rainfall_mm)
 
 
 # ─── Route: POST /findCatchment (alias) ───────────────────────────────────────
@@ -397,13 +388,17 @@ async def analyze_contour(
 @router.post(
     "/findCatchment",
     response_model=ContourUploadResponse,
-    summary="Alias for /analyzeContour — find catchment from KML/KMZ upload",
-    description="Identical to POST /analyzeContour. Provided as an alternative route name.",
+    summary="[Alias] Find Catchment and Identify Pond Candidates",
 )
 async def find_catchment(
-    file: UploadFile = File(..., description="KML or KMZ contour map file"),
-    land_cover: str = Form(default="default"),
-    desired_depth_m: float = Form(default=3.0, ge=0.5, le=10.0),
-    annual_rainfall_mm: Optional[float] = Form(default=None, ge=0, le=10000),
+    contour_map: UploadFile = File(..., description="KML or KMZ contour map file"),
+    land_cover: str = Form("agricultural"),
+    desired_depth_m: float = Form(3.0),
+    annual_rainfall_mm: Optional[float] = Form(None),
 ):
-    return await _analyze_contour(file, land_cover, desired_depth_m, annual_rainfall_mm)
+    return await _analyze_contour(
+        contour_map=contour_map,
+        land_cover=land_cover,
+        desired_depth_m=desired_depth_m,
+        annual_rainfall_mm=annual_rainfall_mm,
+    )
