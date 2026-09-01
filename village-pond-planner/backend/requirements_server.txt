@@ -1,5 +1,5 @@
-# Minimal server requirements — no heavy compiled packages needed
-# Our pipeline uses pure NumPy HydrologyEngine; rasterio/pysheds/richdem not needed
+# Server requirements for Python 3.12 — no rasterio/pysheds/richdem (heavy compiled packages)
+# Our pipeline uses pure NumPy HydrologyEngine which avoids those dependencies
 fastapi==0.111.0
 uvicorn[standard]==0.29.0
 pydantic==2.7.1
@@ -10,6 +10,12 @@ aiohttp==3.9.5
 numpy
 scipy
 shapely
+matplotlib
 lxml
 requests
 python-dotenv==1.0.1
+sqlalchemy==2.0.30
+geoalchemy2==0.15.1
+asyncpg==0.29.0
+psycopg2-binary==2.9.9
+alembic==1.13.1
