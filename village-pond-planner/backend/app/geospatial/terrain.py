@@ -189,10 +189,49 @@ def is_stream_channel(
     return accum >= threshold
 
 
+def mask_osm_waterways(waterways: list[list[dict]], lats: np.ndarray, lons: np.ndarray, buffer_deg: float = 0.002) -> np.ndarray:
+    """
+    Rasterize OSM waterway lines onto the boolean mask of the DEM grid.
+    Cells within buffer_deg of any waterway segment are marked True.
+    """
+    nrows, ncols = len(lats), len(lons)
+    mask = np.zeros((nrows, ncols), dtype=bool)
+    
+    if not waterways:
+        return mask
+        
+    for i in range(nrows):
+        for j in range(ncols):
+            lat, lon = float(lats[i]), float(lons[j])
+            
+            for waterway in waterways:
+                if mask[i, j]:
+                    break
+                for k in range(len(waterway) - 1):
+                    x0, y0 = lon, lat
+                    x1, y1 = waterway[k]['lon'], waterway[k]['lat']
+                    x2, y2 = waterway[k+1]['lon'], waterway[k+1]['lat']
+                    
+                    l2 = (x2 - x1)**2 + (y2 - y1)**2
+                    if l2 == 0:
+                        dist = np.hypot(x0 - x1, y0 - y1)
+                    else:
+                        t = max(0, min(1, ((x0 - x1)*(x2 - x1) + (y0 - y1)*(y2 - y1)) / l2))
+                        proj_x = x1 + t * (x2 - x1)
+                        proj_y = y1 + t * (y2 - y1)
+                        dist = np.hypot(x0 - proj_x, y0 - proj_y)
+                        
+                    if dist <= buffer_deg:
+                        mask[i, j] = True
+                        break
+                        
+    return mask
+
 def identify_candidate_cells(
     lats: np.ndarray,
     lons: np.ndarray,
     elevs: np.ndarray,
+    osm_waterways: list[list[dict]] = None,
     slope_threshold_deg: float = settings.SLOPE_THRESHOLD_DEG,
     elevation_low_percentile: float = settings.ELEVATION_LOW_PERCENTILE,
     stream_accum_percentile: float = settings.STREAM_ACCUM_PERCENTILE,
@@ -215,8 +254,9 @@ def identify_candidate_cells(
 
     River-exclusion:
       Cells whose D8 flow accumulation exceeds `stream_accum_percentile` are
-      active stream/river channels and are excluded. A pond inside a river
-      would be immediately flooded and is hydraulically incorrect.
+      active stream/river channels and are excluded. 
+      If `osm_waterways` are provided, cells falling near physical real-world 
+      rivers are also explicitly excluded.
     """
     slope = compute_slope(lats, lons, elevs)
     elev_threshold = float(np.percentile(elevs, elevation_low_percentile))
@@ -225,6 +265,12 @@ def identify_candidate_cells(
     engine.process()
     accum = engine.accum
     stream_mask = is_stream_channel(accum, stream_accum_percentile)
+    
+    # Optional OSM Masking
+    if osm_waterways:
+        osm_mask = mask_osm_waterways(osm_waterways, lats, lons)
+        stream_mask = stream_mask | osm_mask
+        logger.info(f"OSM Exclusion: Masked {np.count_nonzero(osm_mask)} cells near physical rivers.")
 
     # Hydrological criterion: Meaningful drainage paths (e.g., top 25% of flow accum)
     drainage_threshold = float(np.percentile(accum, 75.0))

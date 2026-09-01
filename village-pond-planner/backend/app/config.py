@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     # Open Elevation API (no key required)
     OPEN_ELEVATION_URL: str = "https://api.open-elevation.com/api/v1/lookup"
     OPEN_ELEVATION_BATCH_URL: str = "https://api.open-elevation.com/api/v1/lookup"
+    
+    # Overpass API (OSM) - main server (requires User-Agent header)
+    OVERPASS_API_URL: str = "https://overpass-api.de/api/interpreter"
 
     # Open-Meteo (no key required)
     OPEN_METEO_URL: str = "https://archive-api.open-meteo.com/v1/archive"
@@ -55,9 +58,8 @@ class Settings(BaseSettings):
     ELEVATION_LOW_PERCENTILE: float = 40.0
     # Flow accumulation percentile above which a cell is treated as a stream/river channel.
     # Cells exceeding this are excluded from pond candidates (a pond inside a river is invalid).
-    # Raised to 92: only the true top 8% highest-accum cells are rivers.
-    # Was 85 — this incorrectly excluded valley-margin cells that are the BEST pond sites.
-    STREAM_ACCUM_PERCENTILE: float = 92.0
+    # Lowered to 85 to make the river exclusion zone wider, since OSM is blocked in this network.
+    STREAM_ACCUM_PERCENTILE: float = 85.0
 
     # ─── Land Suitability ──────────────────────────────────────────
     # Max candidate sites returned per village — increased so we have a

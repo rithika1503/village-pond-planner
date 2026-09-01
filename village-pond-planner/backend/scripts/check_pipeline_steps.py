@@ -41,7 +41,9 @@ async def main():
     print("=" * 60)
     print(" STEP 2: Terrain Analysis & Pond Candidates ")
     print("=" * 60)
-    raw_candidates = identify_candidate_cells(lats, lons, elevs)
+    from app.geospatial.osm_client import fetch_waterways
+    osm_waterways = await fetch_waterways(bbox["min_lat"], bbox["max_lat"], bbox["min_lon"], bbox["max_lon"])
+    raw_candidates = identify_candidate_cells(lats, lons, elevs, osm_waterways=osm_waterways)
     
     if not raw_candidates:
         import numpy as np

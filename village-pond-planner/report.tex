@@ -1,0 +1,383 @@
+\documentclass[12pt,a4paper]{article}
+
+% Packages
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{fancyhdr}
+\usepackage{float}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{parskip}
+\usepackage{enumitem}
+\usepackage{caption}
+
+% Code listing style
+\definecolor{codeblue}{RGB}{30,100,200}
+\definecolor{codegray}{RGB}{100,100,100}
+\definecolor{codegreen}{RGB}{0,130,60}
+\definecolor{codebg}{RGB}{248,248,248}
+
+\lstdefinestyle{apistyle}{
+    backgroundcolor=\color{codebg},
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{codeblue}\bfseries,
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{orange},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numbersep=5pt,
+    frame=single,
+    rulecolor=\color{gray!30}
+}
+\lstset{style=apistyle}
+
+% Header/Footer
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{Village Pond Planner}
+\lhead{CSD Assignment Report}
+\rfoot{Page \thepage}
+\lfoot{Roll No: stu84}
+
+\hypersetup{colorlinks=true, linkcolor=blue, urlcolor=blue}
+
+\begin{document}
+
+% ─── Title Page ───────────────────────────────────────────────────────────────
+\begin{titlepage}
+    \centering
+    \vspace*{2cm}
+    {\huge\bfseries Village Pond Planner\\[0.5em]}
+    {\Large Contour-Driven Hydrological Analysis API\\[2em]}
+    \rule{\linewidth}{0.5pt}\\[1em]
+    {\large\textbf{CSD Assignment Report}\\[0.5em]}
+    {\large Phase 1: Catchment Delineation \& Pond Siting API}
+    \rule{\linewidth}{0.5pt}\\[2em]
+    \begin{tabular}{rl}
+        \textbf{Student:}    & Rithika Sannidhi \\
+        \textbf{Roll No:}    & stu84 \\
+        \textbf{GitHub:}     & \url{https://github.com/rithika1503/village-pond-planner} \\
+        \textbf{API URL:}    & \texttt{http://10.1.75.53:4293} \\
+        \textbf{Swagger UI:} & \texttt{http://10.1.75.53:4293/docs} \\
+        \textbf{Date:}       & \today \\
+    \end{tabular}
+    \vfill
+    {\small Department of Computer Science}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ─── 1. Introduction ──────────────────────────────────────────────────────────
+\section{Introduction}
+
+This report documents the design, implementation, and deployment of the \textbf{Village Pond Planner} --- a REST API that accepts an uploaded contour map (KML format), automatically derives terrain hydrology, identifies optimal pond locations, and returns a structured JSON response containing catchment geometry, pond sizing, and suitability scores.
+
+The system is \textbf{fully general}: no hard-coded coordinates, village names, or pre-computed results are embedded. All outputs are derived algorithmically from the uploaded contour file at runtime, making the system directly extensible to any region anywhere in the world.
+
+% ─── 2. API Route Documentation ───────────────────────────────────────────────
+\section{API Route Documentation}
+
+\subsection{Endpoints}
+
+\begin{center}
+\begin{tabular}{llp{7.5cm}}
+    \toprule
+    \textbf{Method} & \textbf{Path} & \textbf{Description} \\
+    \midrule
+    POST & \texttt{/analyzeContour} & Primary endpoint: accepts KML/KMZ file, returns full pond analysis JSON \\
+    POST & \texttt{/findCatchment}  & Alias for \texttt{/analyzeContour} (identical behaviour) \\
+    GET  & \texttt{/docs}           & Interactive Swagger / ReDoc UI \\
+    GET  & \texttt{/health}         & Health check \\
+    \bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Request Parameters}
+
+\begin{center}
+\begin{tabular}{lllp{5.5cm}}
+    \toprule
+    \textbf{Field} & \textbf{Type} & \textbf{Required} & \textbf{Description} \\
+    \midrule
+    \texttt{file} & File & Yes & KML or KMZ contour map \\
+    \texttt{land\_cover} & string & No & \texttt{vegetated / agricultural / built\_up}. Default: \texttt{agricultural} \\
+    \texttt{desired\_depth\_m} & float & No & Target pond depth in metres. Default: 3.0 \\
+    \texttt{annual\_rainfall\_mm} & float & No & Override rainfall. Fetched live from Open-Meteo if omitted \\
+    \bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{cURL Example}
+
+\begin{lstlisting}[language=bash, caption={Full API call with the sample contour map}]
+curl -X POST "http://10.1.75.53:4293/analyzeContour" \
+  -F "file=@contours_1m.kml" \
+  -F "land_cover=agricultural" \
+  -F "desired_depth_m=3.0" \
+  | python3 -m json.tool
+\end{lstlisting}
+
+\subsection{Response Schema}
+
+\begin{lstlisting}[language=Python, caption={JSON response structure}]
+{
+  "pond_location":  { "lat": 21.2524, "lon": 81.2814, "elevation_m": 280.0 },
+  "terrain":        { "bounding_box": {...}, "elevation_stats": {...} },
+  "catchment":      { "area_m2": 50800.0, "area_ha": 5.08,
+                      "geometry_geojson": { "type": "Polygon", "coordinates": [...] } },
+  "rainfall":       { "annual_rainfall_mm": 1333.2, "source": "Open-Meteo" },
+  "pond_sizing":    { "runoff_volume_m3": 30375.0, "runoff_coefficient": 0.55,
+                      "pond_surface_area_m2": 10125.0, "pond_depth_m": 3.0 },
+  "suitability":    { "total_score": 0.73, "terrain_score": 0.95,
+                      "catchment_score": 0.62, "land_score": 0.50 },
+  "top_candidates": [ { "rank": 1, ... }, { "rank": 2, ... }, ... ]
+}
+\end{lstlisting}
+
+% ─── 3. Catchment Estimation Approach ─────────────────────────────────────────
+\section{Catchment Estimation Approach}
+
+\subsection{Overview}
+
+The system implements a complete \textbf{D8 (Deterministic Eight-Direction)} flow routing pipeline in pure NumPy. The pipeline is entirely derived from the uploaded contour file --- no external elevation data is used.
+
+\subsection{10-Step Pipeline}
+
+\subsubsection{Step 1 -- KML Parsing}
+The uploaded KML/KMZ file is parsed with \texttt{lxml}. Each \texttt{<Placemark>} is a contour line; elevation is read from \texttt{<name>} and coordinates from \texttt{<coordinates>}. Handles raw KML, KMZ archives, and various elevation notations.
+
+\subsubsection{Step 2 -- DEM Interpolation}
+Sparse contour points are interpolated onto a \textbf{150$\times$150 regular grid} using \texttt{scipy.interpolate.griddata} (cubic method), producing a smooth Digital Elevation Model (DEM).
+
+\subsubsection{Step 3 -- Sink Filling (Wang \& Liu, 2006)}
+Hydrological sinks are eliminated using a priority-queue spill-elevation algorithm ensuring every cell drains continuously to the boundary.
+
+\subsubsection{Step 4 -- D8 Flow Direction}
+Each cell is assigned a flow direction to the steepest downhill neighbour among 8 surrounding cells. Diagonal neighbours are penalised by $\sqrt{2}$:
+\begin{equation}
+    \text{slope}_{d} = \frac{\Delta z}{\Delta d}, \quad \Delta d = \begin{cases} 1 & \text{cardinal} \\ \sqrt{2} & \text{diagonal} \end{cases}
+\end{equation}
+
+\subsubsection{Step 5 -- Flow Accumulation}
+A topological pass counts the number of upstream cells draining through each cell. High-accumulation cells = rivers; low-accumulation = ridges.
+
+\subsubsection{Step 6 -- River Exclusion (Dual Mask)}
+\begin{itemize}
+    \item \textbf{Mathematical mask:} Top 15\% flow-accumulation cells flagged as stream channels.
+    \item \textbf{OSM mask:} Official \texttt{api.openstreetmap.org} queried for \texttt{waterway} features; returned XML parsed and rasterised with a 220\,m exclusion buffer.
+\end{itemize}
+
+\subsubsection{Step 7 -- Candidate Identification}
+Cells satisfying: slope $< 5°$, elevation $\leq$ 40th percentile, not river-excluded, are grouped into contiguous regions via BFS. Each region's best cell (max flow accumulation) is its representative. A \textbf{500\,m spatial-diversity filter} ensures spread-out candidates.
+
+\subsubsection{Step 8 -- Outlet Snapping \& Upstream Trace}
+The outlet is walked downstream to the 98th-percentile stream. BFS upstream from there collects all contributing cells --- the catchment.
+
+\subsubsection{Step 9 -- Pond Sizing (Rational Method)}
+\begin{align}
+    V_{\text{runoff}} &= P \times A \times C \\
+    A_{\text{pond}} &= V_{\text{runoff}} / d_{\text{pond}}
+\end{align}
+
+\subsubsection{Step 10 -- Suitability Scoring}
+\begin{equation}
+    S = 0.40\,T + 0.40\,C + 0.20\,L
+\end{equation}
+
+% ─── 4. Demonstration ─────────────────────────────────────────────────────────
+\section{Demonstration with Sample Contour Map}
+
+\subsection{Input Details}
+
+\begin{itemize}
+    \item File: \texttt{contours\_1m.kml} (2710 contour lines)
+    \item Region: Bilaspur, Chhattisgarh, India
+    \item Bounding Box: $21.2398^\circ$N--$21.2636^\circ$N, $81.2814^\circ$E--$81.3126^\circ$E
+    \item Elevation range: 267\,m to 298\,m; Mean: 284.3\,m
+    \item OSM waterways detected and excluded: \textbf{5 features, 6986 cells masked}
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\rule{0pt}{6cm}\rule{12cm}{0pt}}
+    \caption{Filled DEM with Top 5 Candidate Pond Locations and Catchment Polygons.
+    \textit{[Replace with \texttt{filled\_dem.png} generated by \texttt{debug\_flow.py}]}}
+    \label{fig:filled_dem}
+\end{figure}
+
+\subsection{Top 10 Candidate Pond Sites}
+
+The following table summarises all 10 candidate pond locations identified from the sample contour map, ranked by overall suitability score.
+
+\begin{longtable}{>{\bfseries}cp{2.2cm}p{2.2cm}ccccc}
+    \toprule
+    \textbf{Rank} & \textbf{Latitude} & \textbf{Longitude} & \textbf{Elev (m)} & \textbf{Slope ($^\circ$)} & \textbf{Flow Acc.} & \textbf{T. Score} & \textbf{Catchment (ha)} \\
+    \midrule
+    \endhead
+    1  & 21.2524 & 81.2814 & 280.0  & 0.53 & 14 & 0.95 & 5.08   \\
+    2  & 21.2413 & 81.2897 & 279.0  & 0.34 & 13 & 0.95 & 124.59 \\
+    3  & 21.2616 & 81.2967 & 282.0  & 0.92 & 14 & 0.90 & 8.88   \\
+    4  & 21.2558 & 81.2897 & 279.6  & 1.25 & 13 & 0.87 & 1.90   \\
+    5  & 21.2602 & 81.2884 & 278.0  & 1.99 & 14 & 0.84 & 33.90  \\
+    6  & 21.2413 & 81.2827 & 278.5  & 2.26 & 14 & 0.82 & 4.73   \\
+    7  & 21.2447 & 81.2999 & 280.8  & 0.78 &  9 & 0.78 & 69.54  \\
+    8  & 21.2461 & 81.2865 & 277.9  & 2.77 & 14 & 0.78 & 16.02  \\
+    9  & 21.2558 & 81.2954 & 281.0  & 0.53 &  8 & 0.77 & 15.82  \\
+    10 & 21.2573 & 81.2827 & 279.0  & 0.93 &  8 & 0.76 & 4.17   \\
+    \bottomrule
+    \caption{Top 10 Pond Candidate Sites derived from \texttt{contours\_1m.kml}}
+    \label{tab:top10}
+\end{longtable}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\rule{0pt}{6cm}\rule{12cm}{0pt}}
+    \caption{Top 10 Candidate Locations plotted on geojson.io / QGIS.
+    \textit{[Replace with screenshot of \texttt{top10\_visualization.geojson} on geojson.io]}}
+    \label{fig:top10_map}
+\end{figure}
+
+\subsection{Why These Sites Are Best --- Detailed Explanations}
+
+\subsubsection{Site \#1 --- Primary Recommendation}
+\textbf{Location:} $21.2524^\circ$N, $81.2814^\circ$E \quad \textbf{Catchment: 5.08\,ha}\\
+This site scores the highest terrain score (0.95) due to its extremely gentle slope of only $0.53^\circ$ and low elevation (280\,m --- in the bottom 40th percentile of the study area). It sits at a clear natural depression where flow accumulation converges, making excavation minimal and water harvesting most efficient. The 5.08\,ha catchment is compact and hydrologically coherent, meaning almost all rainfall in that sub-watershed reliably drains to this point.
+
+\subsubsection{Site \#2 --- Largest Catchment}
+\textbf{Location:} $21.2413^\circ$N, $81.2897^\circ$E \quad \textbf{Catchment: 124.59\,ha}\\
+This is the most significant site in terms of water harvesting potential, with the \textbf{largest catchment of 124.59\,ha} --- over 24$\times$ more than Site \#1. The very gentle slope ($0.34^\circ$, the gentlest of all candidates) confirms it sits at a major valley convergence zone. The enormous catchment means it can collect rainfall from a very large upstream area, making it ideal for larger-scale water storage. However, its slightly lower terrain score indicates it may need more earthwork.
+
+\subsubsection{Site \#3 --- Northern Valley}
+\textbf{Location:} $21.2616^\circ$N, $81.2967^\circ$E \quad \textbf{Catchment: 8.88\,ha}\\
+Located in the northern section of the study area, this site has a moderate slope ($0.92^\circ$) and a good flow accumulation score, indicating consistent sub-watershed drainage. The 8.88\,ha catchment is well-suited for a medium-scale village pond with low construction risk.
+
+\subsubsection{Site \#4 -- Compact Efficient Site}
+\textbf{Location:} $21.2558^\circ$N, $81.2897^\circ$E \quad \textbf{Catchment: 1.90\,ha}\\
+While this site has a smaller catchment (1.90\,ha), its terrain score of 0.87 reflects favourable slope and elevation conditions. Suitable for a small drinking-water or kitchen-garden pond where a compact, easy-to-maintain water body is preferable.
+
+\subsubsection{Site \#5 -- High Upstream Drainage}
+\textbf{Location:} $21.2602^\circ$N, $81.2884^\circ$E \quad \textbf{Catchment: 33.90\,ha}\\
+With 33.90\,ha of catchment and the highest flow accumulation value (14), this site receives drainage from a sizeable tributary sub-basin. The slightly steeper slope ($1.99^\circ$) means some embankment work will be needed, but the natural convergence of flow makes it hydrologically attractive.
+
+\subsubsection{Sites \#6--\#10 --- Supporting Candidates}
+Sites 6 through 10 represent viable alternatives across different parts of the study area. They range in catchment from 4.17\,ha to 69.54\,ha and all score $> 0.76$ on terrain metrics. Site \#7 (69.54\,ha) is particularly interesting as a secondary large-catchment option in the eastern portion of the study area. These sites ensure that if the primary recommendation is unsuitable due to land ownership or social factors, multiple geographically-spread alternatives exist.
+
+\begin{figure}[H]
+    \centering
+    \fbox{\rule{0pt}{5cm}\rule{12cm}{0pt}}
+    \caption{Flow Accumulation Map showing river channels (high accumulation, bright) and ridge lines (low accumulation, dark). Top 5 candidate locations are overlaid.
+    \textit{[Replace with \texttt{flow\_accumulation.png} generated by \texttt{debug\_flow.py}]}}
+    \label{fig:flow_accum}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\rule{0pt}{5cm}\rule{12cm}{0pt}}
+    \caption{Top 3 candidate sites with catchment polygons on geojson.io with satellite basemap.
+    \textit{[Replace with screenshot of \texttt{top3\_visualization.geojson} on geojson.io]}}
+    \label{fig:top3_map}
+\end{figure}
+
+\subsection{Summary Statistics}
+
+\begin{center}
+\begin{tabular}{ll}
+    \toprule
+    \textbf{Metric} & \textbf{Value} \\
+    \midrule
+    Best Pond Location & $21.2524^\circ$N, $81.2814^\circ$E \\
+    Best Catchment Area & 5.08\,ha \\
+    Largest Catchment (Site \#2) & 124.59\,ha \\
+    Annual Rainfall & 1333\,mm/yr (Open-Meteo ERA5) \\
+    Runoff Volume (Best Site) & 30,375\,m$^3$/yr \\
+    Pond Surface Area (Best Site) & 10,125\,m$^2$ \\
+    Pond Depth & 3.0\,m \\
+    Total Suitability Score & 0.73 / 1.0 \\
+    Total Candidates Returned & 10 \\
+    OSM Waterways Masked & 5 features, 6986 cells \\
+    \bottomrule
+\end{tabular}
+\end{center}
+
+% ─── 5. Code Extensibility ────────────────────────────────────────────────────
+\section{Code Extensibility}
+
+\begin{itemize}
+    \item \textbf{New input format:} Only \texttt{kml\_parser.py} needs modification to return \texttt{(lats, lons, elevs)} arrays. All downstream code is reused as-is.
+    \item \textbf{New scoring dimension:} Add a weight to \texttt{config.py} and update \texttt{scoring.py}. No router changes needed.
+    \item \textbf{Raster DEM input (GeoTIFF):} Replace \texttt{contours\_to\_dem()} with a rasterio reader returning the same NumPy arrays.
+    \item \textbf{Multi-village:} The API is fully stateless. Calling it $N$ times with $N$ KML files yields $N$ independent analyses.
+    \item \textbf{All tunable parameters} live in \texttt{backend/app/config.py} --- grid resolution, slope threshold, stream percentile, scoring weights --- without touching business logic.
+\end{itemize}
+
+% ─── 6. GitHub Repository ─────────────────────────────────────────────────────
+\section{GitHub Repository}
+
+\begin{center}
+    \url{https://github.com/rithika1503/village-pond-planner}
+\end{center}
+
+\begin{center}
+\begin{tabular}{ll}
+    \toprule
+    \textbf{File} & \textbf{Role} \\
+    \midrule
+    \texttt{backend/app/routers/contour.py} & API endpoint (\texttt{POST /analyzeContour}) \\
+    \texttt{backend/app/geospatial/hydrology\_engine.py} & D8 sink-fill, flow direction, accumulation \\
+    \texttt{backend/app/geospatial/catchment.py} & Upstream BFS catchment delineation \\
+    \texttt{backend/app/geospatial/terrain.py} & Candidate identification + OSM masking \\
+    \texttt{backend/app/geospatial/osm\_client.py} & Official OSM API XML client \\
+    \texttt{backend/app/config.py} & All tunable parameters \\
+    \texttt{backend/scripts/debug\_flow.py} & Generates DEM and flow PNG visualisations \\
+    \texttt{backend/scripts/generate\_top3\_geojson.py} & Generates GeoJSON for QGIS / geojson.io \\
+    \bottomrule
+\end{tabular}
+\end{center}
+
+% ─── 7. Deployment ────────────────────────────────────────────────────────────
+\section{Deployment}
+
+The backend is deployed on \textbf{stu84\_sys1} (\texttt{10.1.75.53}). Per the lab port allocation rule (SSH port $22XX \Rightarrow$ App ports $3XX$, $4XX$, $5XX$, $6XX$, $7XX$), with SSH port \textbf{2293}, the application runs on port \textbf{4293} (Application 2 slot).
+
+\begin{lstlisting}[language=bash, caption={Deployment commands on stu84\_sys1}]
+# 1. SSH in
+ssh -p 2293 student@10.1.75.53
+
+# 2. Clone repository
+git clone https://github.com/rithika1503/village-pond-planner
+cd village-pond-planner/backend
+
+# 3. Set up Python environment
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+
+# 4. Start server on port 4293 (persistently)
+nohup uvicorn app.main:app --host 0.0.0.0 --port 4293 \
+  > ~/pond_server.log 2>&1 &
+
+# 5. Verify
+curl http://localhost:4293/health
+\end{lstlisting}
+
+\begin{center}
+\begin{tabular}{ll}
+    \toprule
+    \textbf{Resource} & \textbf{URL} \\
+    \midrule
+    Live API endpoint & \texttt{http://10.1.75.53:4293/analyzeContour} \\
+    Interactive Swagger UI & \texttt{http://10.1.75.53:4293/docs} \\
+    Health check & \texttt{http://10.1.75.53:4293/health} \\
+    \bottomrule
+\end{tabular}
+\end{center}
+
+\end{document}

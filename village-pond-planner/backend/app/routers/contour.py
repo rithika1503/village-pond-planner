@@ -100,34 +100,28 @@ async def _analyze_contour(
     centroid_lat = (bbox["min_lat"] + bbox["max_lat"]) / 2
     centroid_lon = (bbox["min_lon"] + bbox["max_lon"]) / 2
 
-    # ── 5. Candidate pond locations ────────────────────────────────────────────
-    raw_candidates = identify_candidate_cells(lats, lons, elevs)
-    if not raw_candidates:
-        # Relax slope/elevation thresholds but still honour the river-exclusion rule.
-        import numpy as np
-        from app.geospatial.terrain import compute_flow_accumulation, is_stream_channel
-
-        accum = compute_flow_accumulation(elevs)
-        stream_mask = is_stream_channel(accum, settings.STREAM_ACCUM_PERCENTILE)
-        elev_p40 = float(np.percentile(elevs, 40))
-
-        raw_candidates = [
-            {
-                "lat": float(lats[i]),
-                "lon": float(lons[j]),
-                "elevation_m": float(elevs[i, j]),
-                "slope_deg": 0.0,
-                "flow_accum": int(accum[i, j]),
-                "is_stream": bool(stream_mask[i, j]),
-            }
-            for i in range(len(lats))
-            for j in range(len(lons))
-            # low-elevation AND not inside a river channel
-            if elevs[i, j] <= elev_p40 and not stream_mask[i, j]
-        ]
-
+    # ── 5. Candidate Identification ───────────────────────────────────────────
+    try:
+        from app.geospatial.osm_client import fetch_waterways
+        osm_waterways = await fetch_waterways(bbox["min_lat"], bbox["max_lat"], bbox["min_lon"], bbox["max_lon"])
+        
+        raw_candidates = identify_candidate_cells(lats, lons, elevs, osm_waterways=osm_waterways)
         if not raw_candidates:
-            # Absolute last resort: pick the single lowest-elevation non-stream cell
+            # Relax slope/elevation thresholds but still honour the river-exclusion rule.
+            import numpy as np
+            from app.geospatial.terrain import compute_flow_accumulation, is_stream_channel
+
+            accum = compute_flow_accumulation(elevs)
+            stream_mask = is_stream_channel(accum, settings.STREAM_ACCUM_PERCENTILE)
+            
+            # Reapply OSM mask to relaxed candidates as well!
+            if osm_waterways:
+                from app.geospatial.terrain import mask_osm_waterways
+                osm_mask = mask_osm_waterways(osm_waterways, lats, lons)
+                stream_mask = stream_mask | osm_mask
+
+            elev_p40 = float(np.percentile(elevs, 40))
+
             raw_candidates = [
                 {
                     "lat": float(lats[i]),
@@ -139,15 +133,33 @@ async def _analyze_contour(
                 }
                 for i in range(len(lats))
                 for j in range(len(lons))
-                if not stream_mask[i, j]
+                # low-elevation AND not inside a river channel
+                if elevs[i, j] <= elev_p40 and not stream_mask[i, j]
             ]
-            if raw_candidates:
-                raw_candidates = [min(raw_candidates, key=lambda c: c["elevation_m"])]
 
-        logger.info(
-            "Fallback candidate search (relaxed thresholds, river-excluded): %d cells",
-            len(raw_candidates),
-        )
+            if not raw_candidates:
+                # Absolute last resort: pick the single lowest-elevation non-stream cell
+                raw_candidates = [
+                    {
+                        "lat": float(lats[i]),
+                        "lon": float(lons[j]),
+                        "elevation_m": float(elevs[i, j]),
+                        "slope_deg": 0.0,
+                        "flow_accum": int(accum[i, j]),
+                        "is_stream": bool(stream_mask[i, j]),
+                    }
+                    for i in range(len(lats))
+                    for j in range(len(lons))
+                    if not stream_mask[i, j]
+                ]
+                if raw_candidates:
+                    raw_candidates.sort(key=lambda c: c["elevation_m"])
+                    raw_candidates = [raw_candidates[0]]
+
+    except Exception as exc:
+        logger.exception("Terrain analysis failed")
+        raise HTTPException(status_code=500, detail=f"Terrain analysis failed: {exc}")
+
 
     ranked = rank_candidates(raw_candidates, max_sites=10)
 

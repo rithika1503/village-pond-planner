@@ -24,7 +24,8 @@ def main():
     logging.info("Parsing KML...")
     kml_bytes = SAMPLE_KML.read_bytes()
     contour_lines = parse_kml_bytes(kml_bytes)
-    lats, lons, elevs = contours_to_dem(contour_lines, n_points=50)
+    # Use 150 grid points — SAME as generate_top3_geojson.py so results are consistent
+    lats, lons, elevs = contours_to_dem(contour_lines, n_points=150)
 
     logging.info("Running Hydrology Engine...")
     engine = HydrologyEngine(lats, lons, elevs)
@@ -37,8 +38,13 @@ def main():
     from app.geospatial.land_suitability import rank_candidates
     from app.geospatial.catchment import delineate_catchment
 
-    logging.info("Finding candidates...")
-    candidates = identify_candidate_cells(lats, lons, elevs)
+    # Call synchronous fetch directly (no asyncio.run wrapper needed in script context)
+    logging.info("Fetching OSM rivers to exclude from candidate search...")
+    from app.geospatial.osm_client import _fetch_waterways_sync
+    osm_waterways = _fetch_waterways_sync(float(lats.min()), float(lats.max()), float(lons.min()), float(lons.max()))
+
+    logging.info("Finding candidates (excluding OSM rivers)...")
+    candidates = identify_candidate_cells(lats, lons, elevs, osm_waterways=osm_waterways)
     sorted_candidates = rank_candidates(candidates)
     top5 = sorted_candidates[:5]
 

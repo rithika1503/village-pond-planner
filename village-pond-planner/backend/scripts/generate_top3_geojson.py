@@ -45,7 +45,10 @@ async def main():
     lats, lons, elevs = contours_to_dem(contour_lines, n_points=150)  # Increased resolution for smoother polygons
     
     print("Finding candidates...")
-    raw_candidates = identify_candidate_cells(lats, lons, elevs)
+    from app.geospatial.osm_client import fetch_waterways
+    osm_waterways = await fetch_waterways(lats.min(), lats.max(), lons.min(), lons.max())
+    
+    raw_candidates = identify_candidate_cells(lats, lons, elevs, osm_waterways=osm_waterways)
     
     if not raw_candidates:
         engine = HydrologyEngine(lats, lons, elevs)

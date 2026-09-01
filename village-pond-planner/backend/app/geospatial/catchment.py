@@ -70,9 +70,10 @@ def _dem_based_catchment(
     flow_to = engine.flow_to
 
     # 2. Outlet snapping: walk downstream to a hydrological convergence
-    stream_threshold = float(np.percentile(accum, settings.STREAM_ACCUM_PERCENTILE))
+    # We want to snap to a major stream, not just the exclusion boundary, so use 98th percentile.
+    stream_threshold = float(np.percentile(accum, 98.0))
     max_accum = int(np.max(accum))
-    logger.info(f"Stream threshold (p{settings.STREAM_ACCUM_PERCENTILE}): {stream_threshold:.1f}. Max accumulation: {max_accum}")
+    logger.info(f"Stream threshold (p98.0): {stream_threshold:.1f}. Max accumulation: {max_accum}")
     
     start_i = int(np.argmin(np.abs(lats - outlet_lat)))
     start_j = int(np.argmin(np.abs(lons - outlet_lon)))
@@ -83,13 +84,13 @@ def _dem_based_catchment(
         if ri < 0:
             break  # Local minimum, nowhere to flow
             
-        # Criterion 1: Move ONTO the cell crossing the stream threshold, then stop
+        # Criterion 1: Move ONTO the cell crossing the main stream threshold, then stop
         if accum[ri, rj] >= stream_threshold:
             snap_i, snap_j = ri, rj
             break
             
-        # Criterion 2: Stop at a confluence (jump of > 50% and at least 5 cells)
-        if accum[ri, rj] > accum[snap_i, snap_j] * 1.5 + 5:
+        # Criterion 2: Stop at a major confluence (jump of > 50% and at least 50 cells)
+        if accum[ri, rj] > accum[snap_i, snap_j] * 1.5 + 50:
             snap_i, snap_j = ri, rj
             break
             

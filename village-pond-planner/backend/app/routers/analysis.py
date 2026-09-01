@@ -122,8 +122,12 @@ async def analysis_full(
     # 1. DEM
     lats, lons, elevs = await get_dem_for_village(req.village_id, *bbox)
 
+    # Fetch OSM Waterways for precise river exclusion
+    from app.geospatial.osm_client import fetch_waterways
+    osm_waterways = await fetch_waterways(bbox[0], bbox[1], bbox[2], bbox[3])
+
     # 2. Terrain + land score at the chosen point
-    raw_candidates = identify_candidate_cells(lats, lons, elevs)
+    raw_candidates = identify_candidate_cells(lats, lons, elevs, osm_waterways=osm_waterways)
     ranked = rank_candidates(raw_candidates, max_sites=20)
     # Find the closest candidate to requested lat/lon
     best = _closest_candidate(ranked, req.site_lat, req.site_lon)
