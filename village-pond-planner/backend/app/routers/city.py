@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/city", tags=["city-analysis"])
 
 # Nominatim User-Agent (required by ToS)
-_UA = "VillagePondPlanner/1.0 (academic project; contact: admin@example.com)"
+_UA = "VillagePondPlanner-CSD/1.0 (student; rithika1503@gmail.com)"
 
 
 # ─── GET /api/city/search ──────────────────────────────────────────────────────
