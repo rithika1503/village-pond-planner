@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Village Pond Planner</title>
+  <meta name="description" content="Plan village pond sites using terrain analysis, rainfall data and catchment delineation." />
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+  <link rel="stylesheet" href="style.css?v=3" />
+</head>
+<body>
+
+<!-- Header -->
+<header>
+  <div>
+    <h1>Village Pond Planner</h1>
+    <div class="subtitle" id="header-subtitle">Select an input method to begin</div>
+  </div>
+  <div style="display:flex;align-items:center;gap:8px">
+    <button id="btn-satellite" class="btn" title="Toggle satellite imagery">🛰 Satellite</button>
+    <span id="status-tag" class="status-tag">Ready</span>
+    <button id="btn-restart" class="btn danger" style="width:auto;margin:0;padding:5px 10px">↩ Restart</button>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+
+    <!-- ═══════════════════════════════════════════════════
+         STEP 0 — Method picker (always first)
+    ═══════════════════════════════════════════════════ -->
+    <div class="sidebar-section" id="step-method">
+      <h2>How would you like to proceed?</h2>
+      <div class="method-cards">
+        <button class="method-card" id="btn-method-area">
+          <span class="method-icon">🗺</span>
+          <span class="method-title">Select Area on Map</span>
+          <span class="method-desc">Search a city or draw a polygon to identify pond sites</span>
+        </button>
+        <button class="method-card" id="btn-method-kml">
+          <span class="method-icon">📐</span>
+          <span class="method-title">Upload Contour Map</span>
+          <span class="method-desc">Upload a KML/KMZ survey file with elevation contours</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════
+         STEP 1A — Map path: city search
+    ═══════════════════════════════════════════════════ -->
+    <div class="sidebar-section hidden" id="step-city" style="display:none">
+      <div class="step-header">
+        <span class="step-num">1</span>
+        <h2>City / Village</h2>
+      </div>
+      <label for="inp-city">City or village name</label>
+      <input id="inp-city" type="text" placeholder="e.g. Bhilai" />
+      <label for="inp-state">State <span style="font-size:10px;color:#9aa">(helps disambiguate)</span></label>
+      <input id="inp-state" type="text" placeholder="e.g. Chhattisgarh" />
+      <button id="btn-city-search" class="btn primary">Search →</button>
+      <div id="city-error" class="error-box"></div>
+      <div id="city-found" class="hidden" style="margin-top:6px">
+        <div class="city-pill">
+          <span id="city-found-name"></span>
+          <button id="btn-city-clear" class="pill-x" title="Clear">✕</button>
+        </div>
+      </div>
+      <!-- Skip city search and just draw -->
+      <button id="btn-skip-city" class="btn" style="margin-top:6px;font-size:11px">
+        Skip — draw directly on map ↓
+      </button>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════
+         STEP 2A — Map path: choose sub-mode
+    ═══════════════════════════════════════════════════ -->
+    <div class="sidebar-section hidden" id="step-mapmode" style="display:none">
+      <div class="step-header">
+        <span class="step-num">2</span>
+        <h2>What do you want?</h2>
+      </div>
+      <div class="mode-group">
+        <button class="btn mode-btn active" id="btn-mode-top3" data-mode="top3">🏅 Top 3 Sites</button>
+        <button class="btn mode-btn" id="btn-mode-draw" data-mode="draw">✏️ Analyze My Area</button>
+      </div>
+      <p id="mode-hint" class="mode-hint">
+        Auto-recommend the 3 best pond sites inside the city bounds.
+      </p>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════
+         STEP 3A-i — Top-3 parameters + results
+    ═══════════════════════════════════════════════════ -->
+    <div class="sidebar-section hidden" id="step-top3" style="display:none">
+      <div class="step-header">
+        <span class="step-num">3</span>
+        <h2>Parameters</h2>
+      </div>
+      <label for="sel-lc-city">Land cover</label>
+      <select id="sel-lc-city">
+        <option value="agricultural" selected>Agricultural</option>
+        <option value="vegetated">Vegetated / Forest</option>
+        <option value="built_up">Built-up</option>
+        <option value="default">Default / Mixed</option>
+      </select>
+      <label for="inp-depth-city">Pond depth (m)</label>
+      <input id="inp-depth-city" type="number" min="0.5" max="10" step="0.5" value="3" />
+      <button id="btn-top3-run" class="btn primary">Find Best Sites →</button>
+      <div id="top3-cards" style="margin-top:10px"></div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════
+         STEP 3A-ii — Draw-area controls
+    ═══════════════════════════════════════════════════ -->
+    <div class="sidebar-section hidden" id="step-draw" style="display:none">
+      <div class="step-header">
+        <span class="step-num">3</span>
+        <h2>Draw Area</h2>
+      </div>
+      <button id="btn-draw-land" class="btn">Draw land area</button>
+      <button id="btn-draw-catchment" class="btn">Draw catchment <span style="font-size:10px;color:#9aa">(optional)</span></button>
+      <div id="error-box" class="error-box"></div>
+    </div>
+
+    <!-- Draw parameters -->
+    <div class="sidebar-section hidden" id="step-draw-params" style="display:none">
+      <div class="step-header">
+        <span class="step-num">4</span>
+        <h2>Parameters</h2>
+      </div>
+      <label for="sel-land-cover">Land cover</label>
+      <select id="sel-land-cover">
+        <option value="agricultural" selected>Agricultural</option>
+        <option value="vegetated">Vegetated / Forest</option>
+        <option value="built_up">Built-up</option>
+        <option value="default">Default / Mixed</option>
+      </select>
+      <label for="inp-depth">Pond depth (m)</label>
+      <input id="inp-depth" type="number" min="0.5" max="10" step="0.5" value="3" />
+      <button id="btn-analyze" class="btn primary" disabled>Analyze →</button>
+    </div>
+
+    <!-- Draw results -->
+    <div class="sidebar-section hidden" id="step-draw-results" style="display:none">
+      <div class="step-header">
+        <span class="step-num">5</span>
+        <h2>Results</h2>
+      </div>
+      <div id="results" class="results">
+        <div class="result-row"><span class="result-label">Catchment area</span><span class="result-value highlight" id="r-catch-area">—</span></div>
+        <div class="result-row"><span class="result-label">Annual rainfall</span><span class="result-value" id="r-rainfall">—</span></div>
+        <div class="result-row"><span class="result-label">Expected water volume</span><span class="result-value highlight" id="r-storage">—</span></div>
+        <div class="result-row"><span class="result-label">Est. annual runoff</span><span class="result-value" id="r-runoff">—</span></div>
+        <div class="result-row"><span class="result-label">Pond surface area</span><span class="result-value" id="r-pond-area">—</span></div>
+        <div class="result-row"><span class="result-label">Pond depth</span><span class="result-value" id="r-pond-depth">—</span></div>
+        <div class="score-bar-wrap">
+          <div class="result-row" style="border:none;padding-bottom:2px">
+            <span class="result-label">Suitability</span>
+            <span class="result-value highlight" id="r-suitability">—</span>
+          </div>
+          <div class="score-bar-bg"><div id="score-bar" class="score-bar-fill" style="width:0%"></div></div>
+        </div>
+        <div class="result-row" style="margin-top:4px"><span class="result-label">Rainfall source</span><span class="result-value" id="r-source">—</span></div>
+        <div class="result-row"><span class="result-label">Catchment method</span><span class="result-value" id="r-catch-src">—</span></div>
+        <p class="result-note">Preliminary estimate. Engineering survey required before construction.</p>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════
+         STEP 1B — KML upload path
+    ═══════════════════════════════════════════════════ -->
+    <div class="sidebar-section hidden" id="step-kml" style="display:none">
+      <div class="step-header">
+        <span class="step-num">1</span>
+        <h2>Upload Contour Map</h2>
+      </div>
+      <p style="font-size:10px;color:#9aa;margin:0 0 6px;line-height:1.5">
+        Upload a KML or KMZ file containing elevation contour lines. Terrain will be reconstructed and analyzed automatically.
+      </p>
+      <label for="inp-kml">KML / KMZ file</label>
+      <input id="inp-kml" type="file" accept=".kml,.kmz" style="font-size:11px;padding:3px 0" />
+
+      <label for="sel-lc-kml">Land cover</label>
+      <select id="sel-lc-kml">
+        <option value="agricultural" selected>Agricultural</option>
+        <option value="vegetated">Vegetated / Forest</option>
+        <option value="built_up">Built-up</option>
+        <option value="default">Default / Mixed</option>
+      </select>
+      <label for="inp-depth-kml">Pond depth (m)</label>
+      <input id="inp-depth-kml" type="number" min="0.5" max="10" step="0.5" value="3" />
+      <button id="btn-kml-run" class="btn primary" disabled>Analyze Contours →</button>
+      <div id="kml-error" class="error-box"></div>
+    </div>
+
+    <!-- KML — terrain visualizations -->
+    <div class="sidebar-section hidden" id="step-kml-viz" style="display:none">
+      <div class="step-header">
+        <span class="step-num">2</span>
+        <h2>Terrain Views</h2>
+      </div>
+      <p style="font-size:10px;color:#9aa;margin:0 0 8px">Click on the images to download them.</p>
+      <div class="viz-card">
+        <div class="viz-label" style="display:flex; justify-content:space-between;">
+          Filled DEM <span style="font-size:14px; margin-top:-2px;">⤓</span>
+        </div>
+        <a id="link-dem" href="#" download="filled_dem.png" title="Download DEM image">
+          <img id="img-dem" src="" alt="Filled DEM" class="viz-img" />
+        </a>
+      </div>
+      <div class="viz-card" style="margin-top:6px">
+        <div class="viz-label" style="display:flex; justify-content:space-between;">
+          Flow Accumulation <span style="font-size:14px; margin-top:-2px;">⤓</span>
+        </div>
+        <a id="link-flow" href="#" download="flow_accumulation.png" title="Download Flow map">
+          <img id="img-flow" src="" alt="Flow Accumulation" class="viz-img" />
+        </a>
+      </div>
+    </div>
+
+    <!-- KML — results -->
+    <div class="sidebar-section hidden" id="step-kml-results" style="display:none">
+      <div class="step-header">
+        <span class="step-num">3</span>
+        <h2>Results</h2>
+      </div>
+      <div id="kml-results" class="results visible">
+        <div class="result-row"><span class="result-label">Contour lines</span><span class="result-value" id="kr-contours">—</span></div>
+        <div class="result-row"><span class="result-label">Elevation range</span><span class="result-value" id="kr-elev">—</span></div>
+        <div class="result-row"><span class="result-label">Catchment area</span><span class="result-value highlight" id="kr-catch">—</span></div>
+        <div class="result-row"><span class="result-label">Expected water vol.</span><span class="result-value highlight" id="kr-storage">—</span></div>
+        <div class="result-row"><span class="result-label">Est. annual runoff</span><span class="result-value" id="kr-runoff">—</span></div>
+        <div class="result-row"><span class="result-label">Pond surface area</span><span class="result-value" id="kr-pond-area">—</span></div>
+        <div class="result-row"><span class="result-label">Pond depth</span><span class="result-value" id="kr-pond-depth">—</span></div>
+        <div class="score-bar-wrap">
+          <div class="result-row" style="border:none;padding-bottom:2px">
+            <span class="result-label">Suitability</span>
+            <span class="result-value highlight" id="kr-score">—</span>
+          </div>
+          <div class="score-bar-bg"><div id="kr-score-bar" class="score-bar-fill" style="width:0%"></div></div>
+        </div>
+        <p class="result-note">Preliminary estimate. Engineering survey required before construction.</p>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- Map -->
+  <div id="map" style="position:relative">
+    <div id="draw-mode-badge"></div>
+  </div>
+</div>
+
+<script src="app.js?v=2"></script>
+</body>
+</html>

@@ -17,7 +17,6 @@ Design note (viva-ready):
 from __future__ import annotations
 
 import logging
-import random
 from typing import Optional
 
 import numpy as np
@@ -46,34 +45,57 @@ def classify_land_status(
     elevation_m: float,
     slope_deg: float,
     *,
-    seed: Optional[int] = None,
+    flow_accum: int = 0,
+    max_flow_accum: int = 1,
 ) -> str:
     """
-    Heuristic land-status classification in absence of a real land-records API.
+    Fully deterministic terrain-based land-status classification.
+    No randomness — identical inputs always produce identical output.
 
-    Rules (explainable, defensible in viva):
-      - If elevation_m < 5th percentile of typical plateau → might be a water body.
-        (We use the raw value here; caller should pass normalised percentile if known.)
-      - If slope_deg > 15 → built-up / rocky, mark private.
-      - Otherwise random draw weighted towards unknown / government.
+    Rule 1  slope > 15° → 'built-up'
+        Rocky / too steep for excavation.
 
-    Returns one of: government, private, unknown, water-body, built-up.
+    Rule 2  slope < 0.5° AND elev < 200 m → 'unknown'
+        Very flat lowland: may be a seasonal drainage plain or existing
+        water body — needs field verification.
+
+    Rule 3  flow accumulation ratio ≥ 0.70 → 'government'
+        Strong drainage convergence zone (top 30% of candidate set).
+        In Indian land-records practice, nala beds and low-lying drainage
+        depressions are overwhelmingly government revenue/wasteland —
+        the primary targets of MGNREGA watershed and PMKSY programs.
+
+    Rule 4  flow accumulation ratio 0.30–0.70 → 'unknown'
+        Moderate convergence; ownership indeterminate without records.
+
+    Rule 5  low accumulation AND slope > 3° → 'private'
+        Upland cell with little convergence — typically private farmland.
+
+    Rule 6  all other cases → 'unknown'
+
+    Production note:
+        Replace with a Bhunaksha shapefile query or DILRMP REST API call
+        to retrieve actual survey-number-level ownership data.
     """
-    rng = random.Random(seed if seed is not None else hash((round(lat, 4), round(lon, 4))))
-
+    # Rule 1: steep = rocky / not excavatable
     if slope_deg > 15:
         return "built-up"
-    if slope_deg < 0.5 and elevation_m < 200:
-        # Very flat + low → possible seasonal water body
-        return rng.choices(
-            ["water-body", "government", "unknown"],
-            weights=[0.3, 0.4, 0.3],
-        )[0]
 
-    return rng.choices(
-        ["government", "unknown", "private", "built-up"],
-        weights=[0.35, 0.40, 0.20, 0.05],
-    )[0]
+    # Rule 2: very flat + low = drainage plain / potential water body
+    if slope_deg < 0.5 and elevation_m < 200:
+        return "unknown"
+
+    # Rules 3–6: driven by flow accumulation ratio
+    accum_ratio = flow_accum / max(1, max_flow_accum)
+
+    if accum_ratio >= 0.70:
+        return "government"   # strong convergence → drainage land (govt)
+    if accum_ratio >= 0.30:
+        return "unknown"      # moderate convergence → mixed ownership
+    if slope_deg > 3.0:
+        return "private"      # upland, low convergence → likely private
+    return "unknown"
+
 
 
 def score_terrain(
@@ -144,7 +166,9 @@ def rank_candidates(
     scored: list[dict] = []
     for c in raw_candidates:
         land_status = classify_land_status(
-            c["lat"], c["lon"], c["elevation_m"], c["slope_deg"]
+            c["lat"], c["lon"], c["elevation_m"], c["slope_deg"],
+            flow_accum=c.get("flow_accum", 0),
+            max_flow_accum=max_accum,
         )
         if land_status in _INELIGIBLE_STATUSES:
             continue  # filter out

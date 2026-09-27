@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.routers import villages, analysis, contour
+from app.routers import villages, analysis, contour, polygon, city
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -64,6 +64,8 @@ app.add_middleware(
 app.include_router(villages.router)
 app.include_router(analysis.router)
 app.include_router(contour.router)
+app.include_router(polygon.router)
+app.include_router(city.router)
 
 
 # ─── Health check ─────────────────────────────────────────────────────────────

@@ -395,3 +395,125 @@ async def find_catchment(
         desired_depth_m=desired_depth_m,
         annual_rainfall_mm=annual_rainfall_mm,
     )
+
+
+# ─── Route: POST /analyzeContourWithViz ──────────────────────────────────────
+# Same pipeline as /analyzeContour but also generates DEM and flow-accumulation
+# plots and returns them as base64-encoded PNG strings in the JSON response.
+
+async def _generate_terrain_images(lats, lons, elevs) -> tuple[str, str]:
+    """
+    Generate DEM and flow-accumulation images using matplotlib.
+    Returns (dem_b64, flow_b64) — PNG bytes encoded as base64 strings.
+    Runs in a thread pool to avoid blocking the async event loop.
+    """
+    import base64
+    import io
+    import asyncio
+    import functools
+    import numpy as np
+
+    def _make_plots():
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from app.geospatial.terrain import compute_flow_accumulation
+
+        lon_grid, lat_grid = np.meshgrid(lons, lats)
+
+        # ── DEM plot ──────────────────────────────────────────────
+        fig, ax = plt.subplots(figsize=(4, 3), dpi=110)
+        cm = ax.contourf(lon_grid, lat_grid, elevs, levels=20, cmap="terrain")
+        plt.colorbar(cm, ax=ax, label="Elevation (m)", shrink=0.85)
+        ax.contour(lon_grid, lat_grid, elevs, levels=20, colors="white", linewidths=0.4, alpha=0.4)
+        ax.set_title("Filled DEM", fontsize=9, pad=4)
+        ax.set_xlabel("Longitude", fontsize=7); ax.set_ylabel("Latitude", fontsize=7)
+        ax.tick_params(labelsize=6)
+        plt.tight_layout(pad=0.5)
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", bbox_inches="tight")
+        plt.close(fig)
+        dem_b64 = base64.b64encode(buf.getvalue()).decode()
+
+        # ── Flow-accumulation plot ─────────────────────────────────
+        accum = compute_flow_accumulation(elevs)
+        log_accum = np.log1p(accum)
+        fig2, ax2 = plt.subplots(figsize=(4, 3), dpi=110)
+        cm2 = ax2.pcolormesh(lon_grid, lat_grid, log_accum, cmap="Blues", shading="auto")
+        plt.colorbar(cm2, ax=ax2, label="log(accumulation)", shrink=0.85)
+        ax2.set_title("Flow Accumulation", fontsize=9, pad=4)
+        ax2.set_xlabel("Longitude", fontsize=7); ax2.set_ylabel("Latitude", fontsize=7)
+        ax2.tick_params(labelsize=6)
+        plt.tight_layout(pad=0.5)
+        buf2 = io.BytesIO()
+        fig2.savefig(buf2, format="png", bbox_inches="tight")
+        plt.close(fig2)
+        flow_b64 = base64.b64encode(buf2.getvalue()).decode()
+
+        return dem_b64, flow_b64
+
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, functools.partial(_make_plots))
+
+
+@router.post(
+    "/analyzeContourWithViz",
+    summary="Analyze Contour Map + Return Terrain Visualizations",
+)
+async def analyze_contour_with_viz(
+    contour_map: UploadFile = File(..., description="KML or KMZ contour map file"),
+    land_cover: str = Form("agricultural"),
+    desired_depth_m: float = Form(default=3.0, ge=0.5, le=10.0),
+    annual_rainfall_mm: Optional[float] = Form(default=None, ge=0, le=10000),
+):
+    """
+    Identical analysis pipeline as /analyzeContour, plus:
+      - dem_image_b64:  base64 PNG of the reconstructed DEM with contour lines
+      - flow_image_b64: base64 PNG of the log-scale flow-accumulation grid
+
+    The frontend embeds these directly as <img src="data:image/png;base64,...">
+    without any extra round-trips.
+    """
+    # 1. Re-parse the KML to get the DEM grid for visualization
+    raw = await contour_map.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    try:
+        contour_lines = parse_kml_bytes(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    if len(contour_lines) < 3:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Only {len(contour_lines)} contour line(s) found. At least 3 required.",
+        )
+
+    try:
+        lats, lons, elevs = contours_to_dem(contour_lines, n_points=settings.DEM_GRID_POINTS)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"DEM interpolation failed: {exc}")
+
+    # 2. Run standard analysis (re-read is impossible; rebuild UploadFile-like object)
+    import io as _io
+    from fastapi import UploadFile as _UF
+    from starlette.datastructures import UploadFile as _SUploadFile
+
+    fake_file = _io.BytesIO(raw)
+    fake_upload = _SUploadFile(filename=contour_map.filename or "upload.kml", file=fake_file)
+
+    analysis = await _analyze_contour(fake_upload, land_cover, desired_depth_m, annual_rainfall_mm)
+
+    # 3. Generate terrain images in thread pool
+    try:
+        dem_b64, flow_b64 = await _generate_terrain_images(lats, lons, elevs)
+    except Exception as exc:
+        logger.warning("Terrain image generation failed: %s", exc)
+        dem_b64, flow_b64 = None, None
+
+    # 4. Merge into response dict
+    result = analysis.model_dump()
+    result["dem_image_b64"]  = dem_b64
+    result["flow_image_b64"] = flow_b64
+    return JSONResponse(content=result)

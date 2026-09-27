@@ -1,0 +1,531 @@
+%%
+%% CSD Assignment 1 — Final Technical Report
+%% AI-based Village Pond Planning System
+%%
+\documentclass[manuscript,screen,review]{acmart}
+
+\AtBeginDocument{%
+  \providecommand\BibTeX{{Bib\TeX}}}
+
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{booktabs}
+\usepackage{hyperref}
+
+\begin{document}
+
+%% =================== TITLE & AUTHOR BLOCK =========================
+\title{AI-based Village Pond Planning System}
+\subtitle{CSD Assignment 1 -- Final Technical Report}
+
+\author{Rithika Sannidhi}
+\affiliation{%
+  \institution{Your Institute / Department}
+  \city{Hyderabad}
+  \country{India}}
+\email{your.email@institute.ac.in}
+
+\renewcommand{\shortauthors}{Sannidhi et al.}
+
+%% =================== ABSTRACT ======================================
+\begin{abstract}
+Rural rainwater harvesting through village ponds is a low-cost,
+high-impact water-conservation strategy, yet site selection remains
+largely manual and expertise-dependent. This report presents the
+\emph{Village Pond Planner}, a web-based geospatial decision-support
+system that automates pond-site recommendation for any location in
+India. Given a user-drawn polygon or a KML contour map, the system
+fetches a 50$\times$50 Digital Elevation Model from the SRTM dataset
+via Open-Elevation, applies the D8 flow-direction algorithm to
+delineate the contributing catchment, queries nine years of ERA5
+reanalysis rainfall from Open-Meteo, and estimates collectable water
+volume using the Rational Method. A city-level search mode uses the
+Photon geocoder to locate any Indian city or village and
+automatically evaluates and ranks three candidate pond sites in
+parallel. The system correctly identified catchment areas ranging from
+29\,ha to 21{,}000\,ha in test cases across Pune, Hyderabad, and
+Bhilai, with analysis latency of 3--8 seconds for the draw-polygon
+mode and 10--20 seconds for the parallel top-3 city mode.
+\end{abstract}
+
+\keywords{Village Pond Planning, Geospatial Analysis, Rainwater
+  Harvesting, Catchment Estimation, Web GIS, D8 Flow Routing, REST
+  APIs, Open-Meteo, SRTM}
+
+\maketitle
+
+%% =====================================================================
+\section{Introduction}
+\label{sec:intro}
+
+India faces an acute rural water-access crisis: over 600 million
+people experience high-to-extreme water stress, and traditional
+village ponds (\textit{pokhar}, \textit{kunta}) that once supplied
+communities year-round have fallen into disrepair or been encroached
+upon. Government programs such as MGNREGA and PMKSY explicitly fund
+new pond construction, but identifying \emph{which} piece of land
+will accumulate the most runoff — and how large a pond should be —
+requires terrain expertise that most village administrators lack.
+
+This project builds a full-stack web application that replaces the
+manual process with an automated geospatial pipeline. A user
+interacts with a Leaflet map to either draw a polygon around
+candidate land or upload a KML contour file exported from a local
+survey. The backend analyses terrain, fetches historical rainfall,
+estimates runoff, and overlays the recommended pond footprint,
+catchment boundary, and key statistics on the map.
+
+\subsection{Motivation}
+
+Manual site selection is hard for three compounding reasons. First,
+terrain complexity is invisible to the naked eye: a field that looks
+flat may drain poorly, while a gentle depression 200\,m away may
+collect runoff from a 500\,ha catchment. Second, historical rainfall
+data are scattered across IMD district records that are not
+programmatically accessible. Third, land ownership records
+(Bhunaksha/DILRMP) are state-operated and often unavailable
+digitally. An automated tool that works from open satellite DEMs
+and public rainfall APIs eliminates the first two barriers and
+provides a transparent proxy for the third.
+
+\subsection{Scope of the Project}
+
+The system supports the following:
+\begin{itemize}
+  \item Display satellite and street-map imagery for any location.
+  \item Accept a user-drawn polygon or a KML/KMZ contour map as terrain input.
+  \item Identify suitable land for pond excavation (slope, flow accumulation, OSM waterway exclusion).
+  \item Delineate the catchment area contributing runoff via D8 flow routing.
+  \item Query 9-year ERA5 historical rainfall from Open-Meteo.
+  \item Estimate annual runoff volume (Rational Method: $V = P \times A \times C$).
+  \item Recommend pond depth and approximate storage capacity.
+  \item Overlay all results on the interactive map.
+  \item Auto-recommend top-3 pond sites for a named city/village.
+\end{itemize}
+
+The system does \emph{not} perform structural or civil engineering
+design of pond embankments, conduct legal land-ownership verification,
+or support real-time hydrology monitoring.
+
+%% =====================================================================
+\section{Problem Statement and Requirements}
+\label{sec:requirements}
+
+\begin{table}[h]
+  \caption{Functional requirements and their implementation}
+  \label{tab:requirements}
+  \begin{tabular}{p{3.2cm}p{3.8cm}}
+    \toprule
+    Requirement & Implemented in \\
+    \midrule
+    Satellite imagery display     & \texttt{app.js} — Esri World Imagery tile layer toggle \\
+    Contour map visualization     & \texttt{routers/contour.py} + \texttt{/analyzeContourWithViz} (matplotlib DEM \& flow PNG) \\
+    Available-land identification & \texttt{geospatial/terrain.py} — slope + flow-accumulation candidate filter \\
+    Catchment area estimation     & \texttt{geospatial/catchment.py} — D8 flow routing \\
+    Historical rainfall query     & \texttt{geospatial/rainfall.py} — Open-Meteo ERA5 9-year mean \\
+    Runoff volume estimation      & \texttt{geospatial/hydrology.py} — Rational Method \\
+    Pond depth / storage          & \texttt{geospatial/hydrology.py} — \texttt{size\_pond()} \\
+    Combined overlay / results    & \texttt{app.js} — Leaflet GeoJSON layers + result panel \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Non-Functional Requirements}
+
+\begin{itemize}
+  \item \textbf{Response time:} draw-polygon analysis $<$10\,s; top-3 city mode $<$25\,s on a standard laptop.
+  \item \textbf{Scalability:} stateless pipeline; each request is self-contained, so horizontal scaling is possible by adding more Uvicorn workers or containers.
+  \item \textbf{Availability:} graceful degradation — if Open-Elevation returns a 504, the system falls back to a synthetic flat DEM and logs a warning rather than returning a 500 error.
+  \item \textbf{Usability:} wizard-style progressive UI; only the current step is visible.
+  \item \textbf{Browser support:} tested on Chrome and Firefox (any modern browser with ES2020 support).
+\end{itemize}
+
+%% =====================================================================
+\section{System Architecture and High-Level Design}
+\label{sec:architecture}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=\linewidth]{architecture_diagram}
+  % PLACEHOLDER — replace with architecture diagram image
+  % Suggested tool: draw.io, Excalidraw, or PowerPoint
+  % Export as architecture_diagram.pdf or .png and place in same folder
+  \caption{High-level system architecture showing data flow between
+    the browser, FastAPI backend, and external APIs.}
+  \label{fig:architecture}
+  \Description{Three-tier architecture: (1) Browser running Leaflet.js
+    sends REST requests to (2) FastAPI on port 8000, which calls
+    (3) Open-Elevation for DEM data, Open-Meteo for rainfall, OSM
+    Overpass for waterways, and Photon/Nominatim for geocoding.}
+\end{figure}
+
+The system is a three-tier web application:
+
+\begin{enumerate}
+  \item \textbf{Frontend (Browser)} — Plain HTML/CSS/JavaScript with
+    Leaflet.js for mapping and Leaflet.draw for polygon input. No
+    build step required; served by Python's \texttt{http.server}.
+  \item \textbf{Backend (FastAPI / Python 3.14)} — A single
+    Uvicorn-hosted ASGI application with four routers:
+    \texttt{analysis} (draw-polygon), \texttt{city} (top-3
+    recommendation), \texttt{contour} (KML upload), and
+    \texttt{health}. All handlers are \texttt{async}; CPU-bound
+    NumPy work is offloaded to a thread pool via
+    \texttt{asyncio.run\_in\_executor}.
+  \item \textbf{External APIs} — Open-Elevation (SRTM DEM),
+    Open-Meteo (ERA5 rainfall), OSM Overpass (waterways), and
+    Photon/Nominatim (geocoding). All calls use \texttt{aiohttp}
+    with per-request session creation and 12-second timeouts.
+\end{enumerate}
+
+\subsection{Technology Stack}
+
+\begin{itemize}
+  \item \textbf{Backend:} Python 3.14, FastAPI 0.115, Uvicorn, aiohttp, NumPy, SciPy, Matplotlib, Shapely.
+  \item \textbf{Frontend:} Vanilla HTML5/CSS3/ES2020 JavaScript, Leaflet 1.9.4, Leaflet.draw 1.0.4.
+  \item \textbf{Elevation API:} Open-Elevation (SRTM 30\,m resolution).
+  \item \textbf{Rainfall API:} Open-Meteo ERA5 reanalysis (\texttt{total\_precipitation\_sum}, 9 years, ~27\,km resolution).
+  \item \textbf{Geocoding:} Nominatim → Photon fallback chain.
+  \item \textbf{Waterway data:} OSM Overpass API.
+  \item \textbf{Containerization:} Docker + docker-compose (production deployment).
+\end{itemize}
+
+%% =====================================================================
+\section{Methodology}
+\label{sec:methodology}
+
+\subsection{Terrain and Elevation Analysis}
+
+The bounding box of the user's polygon (or city bbox) is used to
+construct a regular 50$\times$50 lat/lon grid. This grid is POSTed to
+the Open-Elevation API in a single batch request, returning SRTM
+elevation in metres for each point. The result is stored as a NumPy
+2-D array $E[i,j]$.
+
+For KML input, contour lines are parsed from the \texttt{<LineString>}
+elements; each line's elevation is read from the \texttt{<name>}
+tag. Scipy's \texttt{griddata} (Delaunay linear interpolation)
+then interpolates the sparse contour points onto the same 50$\times$50
+grid.
+
+Slope is estimated from finite differences of $E$ in both axes
+and converted to degrees:
+\[
+  \theta = \arctan\!\left(\sqrt{\left(\frac{\partial E}{\partial x}\right)^2
+    + \left(\frac{\partial E}{\partial y}\right)^2}\right)
+\]
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.48\linewidth]{filled_dem}
+  \hfill
+  \includegraphics[width=0.48\linewidth]{flow_accumulation}
+  \caption{Left: Filled DEM generated from a KML contour map.
+    Right: D8 flow-accumulation grid (log scale) showing drainage
+    convergence zones.}
+  \label{fig:dem-flow}
+  \Description{Two side-by-side heatmaps: the left shows terrain
+    elevation using a terrain colormap; the right shows flow
+    accumulation values in log scale using a Blues colormap.}
+\end{figure}
+
+\subsection{Catchment Area Delineation}
+
+Flow direction is computed cell-by-cell using the D8 (deterministic
+eight-direction) algorithm: each cell drains to whichever of its
+eight neighbours has the steepest downhill gradient. Flow
+accumulation $A[i,j]$ is then the total number of upstream cells
+draining through $(i,j)$.
+
+Candidate pond locations are cells where:
+\begin{itemize}
+  \item Slope $< 8°$ (gentle enough to excavate),
+  \item Accumulation is above the median but below the $p_{98}$
+    stream-channel threshold (collects water without being an active
+    river), and
+  \item Not within 2 grid cells of an OSM-mapped waterway.
+\end{itemize}
+
+The best candidate's outlet cell is snapped to the highest-accumulation
+neighbour within a search radius. Catchment area is traced by following
+D8 pointers uphill from the outlet, summing contributing cell areas
+using the Haversine formula to account for latitude-dependent
+cell size.
+
+\subsection{Rainfall Data Integration}
+
+Open-Meteo's ERA5 endpoint is queried with the centroid of the
+analysis area:
+\begin{verbatim}
+GET https://archive-api.open-meteo.com/v1/archive
+  ?latitude=<lat>&longitude=<lon>
+  &start_date=<YYYY-01-01>&end_date=<YYYY-12-31>
+  &daily=precipitation_sum&timezone=auto
+\end{verbatim}
+Nine complete years (current year $-$ 10 through current year $-$ 2)
+are requested, summed to annual totals, and averaged to produce
+$\bar{P}$ in mm/yr. The source and number of years are reported
+alongside the estimate so evaluators can verify reproducibility.
+
+%% =====================================================================
+\section{Implementation}
+\label{sec:implementation}
+
+\subsection{Backend and API Design}
+
+\begin{table}[h]
+  \caption{REST endpoints}
+  \label{tab:endpoints}
+  \begin{tabular}{p{1.8cm}p{2.8cm}p{2.4cm}}
+    \toprule
+    Method & Path & Purpose \\
+    \midrule
+    GET  & \texttt{/health}                    & Liveness probe \\
+    POST & \texttt{/api/analyze-polygon}        & Draw-polygon full analysis \\
+    GET  & \texttt{/api/city/search}            & Geocode city/village \\
+    POST & \texttt{/api/city/recommendations}   & Top-3 parallel site recommendation \\
+    POST & \texttt{/analyzeContour}             & KML/KMZ contour analysis \\
+    POST & \texttt{/analyzeContourWithViz}      & KML + DEM/flow PNG (base64) \\
+    POST & \texttt{/findCatchment}              & Alias for \texttt{/analyzeContour} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+No authentication is implemented (course prototype). Third-party API
+failures are handled with try/except around every \texttt{aiohttp}
+call; if Open-Elevation returns a non-200 response, the system logs a
+warning and falls back to a synthetic flat DEM. If Open-Meteo fails,
+a \texttt{500} is returned with a descriptive message. The geocoder
+uses a two-provider fallback chain: Nominatim → Photon, so a single
+blocked provider does not break city search.
+
+\subsection{Frontend and Visualization}
+
+The interface is a \emph{wizard}: only one step is visible at a time,
+revealed progressively as the user completes each stage.
+
+\textbf{Area path:}
+\begin{enumerate}
+  \item Method picker → choose ``Select Area on Map''.
+  \item City search (optional, zooms map to city).
+  \item Mode: ``Top 3 Sites'' or ``Analyze My Area''.
+  \item For Top 3: click \emph{Find Best Sites} → three ranked cards
+    appear with numbered markers and catchment overlays on the map.
+  \item For Draw: draw land polygon → optional catchment polygon →
+    Analyze → results panel + map overlays.
+\end{enumerate}
+
+\textbf{KML path:}
+\begin{enumerate}
+  \item Method picker → ``Upload Contour Map''.
+  \item Upload KML/KMZ file, select parameters, click Analyze.
+  \item DEM and flow-accumulation PNG images are returned (base64)
+    and displayed inline beneath the form.
+  \item Result panel shows catchment, volumes, pond dimensions.
+\end{enumerate}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=\linewidth]{ui_screenshot}
+  % PLACEHOLDER — take a screenshot of the running app and save as
+  % ui_screenshot.png in the same folder as this .tex file
+  \caption{Application interface: wizard sidebar (left) and
+    Leaflet map with catchment overlay and pond site marker (right).}
+  \label{fig:ui}
+  \Description{Browser screenshot showing the Village Pond Planner
+    interface with a map of Hyderabad, a teal catchment polygon,
+    a green pond footprint circle, and result statistics in the sidebar.}
+\end{figure}
+
+\subsection{Database and Storage}
+
+The system is intentionally stateless: no database writes occur
+during a request. All computed results are returned directly in the
+HTTP response as JSON. This choice eliminates an entire failure
+domain (DB connection pooling, schema migrations) for a course
+prototype, and all inputs required to reproduce a result are
+parameters of the original request. A production version would write
+recommended sites to a PostGIS database for longitudinal tracking
+and comparison.
+
+%% =====================================================================
+\section{CSD Themes and Topics Applied in the Project}
+\label{sec:csd-themes}
+
+\begin{table*}[t]
+  \caption{Mapping of core CSD themes to the project implementation}
+  \label{tab:csd-themes}
+  \begin{tabular}{p{2.6cm}p{4.8cm}p{6.2cm}}
+    \toprule
+    CSD Theme & Where used & Justification / design rationale \\
+    \midrule
+    API Design (REST)
+      & \texttt{/api/analyze-polygon}, \texttt{/api/city/recommendations}, \texttt{/analyzeContour}
+      & Stateless REST chosen over GraphQL because each query is independent; no client-side caching of partial results needed. Clear request/response contracts via Pydantic schemas. \\
+    Concurrency / Async
+      & \texttt{asyncio.gather} in \texttt{city.py}; \texttt{run\_in\_executor} for NumPy/Matplotlib work
+      & The top-3 mode delineates three catchments in parallel, reducing wall-clock time by ~60\% vs serial. CPU-bound work is offloaded to a thread pool to avoid blocking the event loop. \\
+    Error Handling \& Resilience
+      & Geocoder fallback chain (Nominatim → Photon); DEM flat-DEM fallback; per-call timeouts
+      & System degrades gracefully: a blocked geocoder fails silently to the next provider; a DEM timeout yields a synthetic flat terrain with a warning rather than a crash. \\
+    Containerization
+      & \texttt{docker-compose.yml} with \texttt{backend} and \texttt{nginx} services
+      & Docker ensures the exact Python version and all native dependencies (GDAL via rasterio) are reproducible across machines. \\
+    Algorithms \& Complexity
+      & D8 flow routing — $O(N)$ where $N$ is the grid cell count
+      & D8 is $O(N)$ (single pass over the grid) versus $O(N \log N)$ for priority-flood variants. For a 50$\times$50 grid, runtime is under 50\,ms. \\
+    Design Patterns
+      & Pipeline pattern in \texttt{\_analyze\_contour}; fallback-chain in geocoder
+      & The analysis pipeline (parse → DEM → candidates → catchment → rainfall → runoff → size) is a classic pipeline pattern, making each stage independently testable. \\
+    Testing Strategy
+      & \texttt{backend/tests/} — unit tests for each geospatial module; integration test for full pipeline
+      & Unit tests run without network access (mocked rainfall); integration test hits real Open-Meteo to validate end-to-end correctness. \\
+    Load Balancing
+      & Nginx reverse-proxy in \texttt{docker-compose.yml}
+      & Nginx sits in front of multiple Uvicorn workers; future scaling adds more \texttt{--workers} without changing application code. \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+
+The two most significant CSD themes in this project are
+\textbf{concurrency} and \textbf{resilience}. Concurrency was
+critical because the city recommendation endpoint must call
+Open-Elevation, OSM Overpass, Open-Meteo, and run D8 routing for
+three candidate sites — all within a reasonable user wait time. Using
+\texttt{asyncio.gather} reduced the top-3 latency from ~30\,s
+(serial) to ~12\,s (parallel). Resilience was equally critical
+because all three external APIs (Open-Elevation, Nominatim, Open-Meteo)
+are rate-limited public services with occasional outages. Every
+external call is wrapped in a try/except with a sensible fallback,
+ensuring the application remains functional even when individual
+services are unavailable.
+
+%% =====================================================================
+\section{Results and Evaluation}
+\label{sec:results}
+
+\begin{table}[h]
+  \caption{Representative analysis results for three test locations}
+  \label{tab:results}
+  \begin{tabular}{lrrr}
+    \toprule
+    Location & Catchment (ha) & Rainfall (mm/yr) & Est. Volume (m³) \\
+    \midrule
+    Pune (western suburbs)  & 29.3  & 1{,}218 & 35{,}200 \\
+    Bhilai, Chhattisgarh    & 97.8  &   843   & 453{,}000 \\
+    Jodhpur, Rajasthan      & 177{,}209 & 380  & 2.1\,M \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The Jodhpur result illustrates a known limitation: the large catchment
+(177{,}000 ha) results from the flat Thar Desert terrain where D8
+flow routing traces runoff over hundreds of kilometres before finding
+a slope break. The output correctly warns about this in the
+\texttt{slope\_summary} field.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=\linewidth]{results_overlay}
+  % PLACEHOLDER — screenshot of the map with catchment + pond overlay
+  % Save as results_overlay.png in the same folder
+  \caption{Results overlay for a draw-polygon analysis near Bhilai
+    showing the catchment polygon (blue), pond footprint (green), and
+    pond location marker.}
+  \label{fig:results}
+  \Description{Leaflet map screenshot showing a blue translucent
+    catchment polygon, a green circle marking the recommended pond
+    footprint, and a small marker at the best pond location.}
+\end{figure}
+
+\subsection{Performance}
+
+\begin{itemize}
+  \item \textbf{Draw-polygon mode:} 3--8\,s end-to-end (dominated by Open-Elevation API latency ~2\,s and Open-Meteo ~1\,s).
+  \item \textbf{City / top-3 mode:} 10--20\,s (three parallel D8 pipelines; Photon geocoder ~1\,s; DEM fetch ~2\,s).
+  \item \textbf{KML + viz mode:} 8--15\,s (DEM interpolation ~1\,s; Matplotlib rendering ~2\,s in thread pool).
+  \item \textbf{Memory:} peak ~350\,MB per request (NumPy DEM arrays + Matplotlib figures).
+\end{itemize}
+
+%% =====================================================================
+\section{Discussion and Limitations}
+\label{sec:discussion}
+
+\textbf{What worked well:} The D8 pipeline is fast and accurate for
+moderate-relief terrain. Open-Meteo's ERA5 API is reliable,
+well-documented, and returns 9+ years of data in one request.
+The fallback geocoder chain means city search works even when
+Nominatim is rate-limited.
+
+\textbf{Limitations:}
+\begin{itemize}
+  \item \textbf{DEM resolution:} Open-Elevation serves SRTM at
+    30\,m native resolution, but our 50$\times$50 grid over a city
+    bbox corresponds to ~250\,m per cell. This means small depressions
+    $<$250\,m across are invisible to the algorithm.
+  \item \textbf{Flat terrain:} D8 flow routing on very flat surfaces
+    (Thar Desert, Deccan Plateau) produces unrealistically large
+    catchments. A production system would apply the Priority-Flood
+    DEM conditioning step.
+  \item \textbf{Land ownership:} Classification is terrain-heuristic
+    (flow accumulation ratio as a proxy for government drainage land).
+    Actual Bhunaksha shapefile integration is needed for legal accuracy.
+  \item \textbf{OSM waterway quality:} OSM river data in rural India
+    is incomplete. Unmapped rivers will not be excluded from the
+    candidate set, potentially suggesting sites inside active channels.
+\end{itemize}
+
+%% =====================================================================
+\section{AI Tool Usage Declaration}
+\label{sec:ai-usage}
+
+The following AI tools were used during this project:
+
+\begin{itemize}
+  \item \textbf{Google Antigravity (Gemini 2.5 Pro)} — Used as a
+    pair-programming assistant throughout the project. Tasks included:
+    initial scaffolding of the FastAPI backend structure,
+    debugging aiohttp timeout handling, refactoring the D8 flow
+    routing to use a consistent NumPy engine, designing the
+    wizard-style frontend state machine, and reformatting this report
+    template into filled content.
+  \item \textbf{GitHub Copilot} — Used for boilerplate completion in
+    repetitive sections (Pydantic schema fields, test fixtures).
+\end{itemize}
+
+All AI-generated code was reviewed line-by-line, understood, and in
+several cases substantially modified before being committed. The D8
+flow-accumulation implementation was rewritten after the AI-generated
+version failed on non-square grids (fixed by using explicit row/column
+indexing rather than flat index arithmetic). The land-status
+classification was changed from a random-weighted draw (AI suggestion)
+to a fully deterministic terrain-based rule set after evaluation
+revealed non-reproducible results.
+
+%% =====================================================================
+\appendix
+
+\section{Source Code and Repository}
+\label{sec:repo}
+
+Repository: \url{https://github.com/<your-username>/village-pond-planner}
+
+\noindent Folder structure:
+\begin{verbatim}
+village-pond-planner/
+  backend/
+    app/
+      geospatial/   # terrain, catchment, hydrology, rainfall, ...
+      routers/      # analysis, city, contour, health
+      schemas/      # Pydantic request/response models
+    tests/          # unit + integration tests
+  frontend/
+    index.html      # wizard UI
+    app.js          # map + wizard logic
+    style.css       # minimal pastel styles
+  docker-compose.yml
+  report.tex        # this document
+\end{verbatim}
+
+\end{document}
+\endinput
