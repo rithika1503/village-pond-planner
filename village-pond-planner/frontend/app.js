@@ -6,8 +6,7 @@
  *          → (kml)  → kml upload → kml-viz + kml-results
  */
 
-const API_BASE = "http://10.1.75.53:5293";
-
+const API_BASE = "http://10.1.75.53:4293";
 
 // ─── Map ──────────────────────────────────────────────────────────────────────
 const map = L.map("map", { zoomControl: true }).setView([20.5, 78.9], 5);
