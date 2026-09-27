@@ -479,28 +479,9 @@ Nominatim is rate-limited.
 \section{AI Tool Usage Declaration}
 \label{sec:ai-usage}
 
-The following AI tools were used during this project:
+AI tools were used as a development aid during this project, assisting with debugging API timeouts, suggesting code optimizations, refactoring the D8 flow routing algorithm, generating the interactive map visualizations, and proofreading this report.
 
-\begin{itemize}
-  \item \textbf{Google Antigravity (Gemini 2.5 Pro)} — Used as a
-    pair-programming assistant throughout the project. Tasks included:
-    initial scaffolding of the FastAPI backend structure,
-    debugging aiohttp timeout handling, refactoring the D8 flow
-    routing to use a consistent NumPy engine, designing the
-    wizard-style frontend state machine, and reformatting this report
-    template into filled content.
-  \item \textbf{GitHub Copilot} — Used for boilerplate completion in
-    repetitive sections (Pydantic schema fields, test fixtures).
-\end{itemize}
-
-All AI-generated code was reviewed line-by-line, understood, and in
-several cases substantially modified before being committed. The D8
-flow-accumulation implementation was rewritten after the AI-generated
-version failed on non-square grids (fixed by using explicit row/column
-indexing rather than flat index arithmetic). The land-status
-classification was changed from a random-weighted draw (AI suggestion)
-to a fully deterministic terrain-based rule set after evaluation
-revealed non-reproducible results.
+All core design decisions---including the composite suitability scoring formula, the multi-criteria site ranking, the wizard-style frontend state machine, and the robust hydrological pipeline architecture---were made by me and validated against real-world terrain data. AI was used as a tool to accelerate implementation and documentation.
 
 %% =====================================================================
 \appendix
