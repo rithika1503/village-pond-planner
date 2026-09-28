@@ -282,6 +282,8 @@ async def _process_candidate(
 
 # ─── Geocoding (multi-provider with fallbacks) ───────────────────────────────
 
+_GEO_CACHE: Dict[str, CitySearchResult] = {}
+
 async def _nominatim_geocode(city: str, state: Optional[str]) -> Optional[CitySearchResult]:
     """
     Geocode city with fallback chain:
@@ -289,10 +291,15 @@ async def _nominatim_geocode(city: str, state: Optional[str]) -> Optional[CitySe
       2. photon.komoot.io  (OSM-based, no key, usually unblocked)
     Returns None only if all providers fail to find the city.
     """
+    cache_key = f"{city}_{state}".lower()
+    if cache_key in _GEO_CACHE:
+        return _GEO_CACHE[cache_key]
+
     for attempt in (_try_nominatim, _try_photon):
         try:
             result = await attempt(city, state)
             if result is not None:
+                _GEO_CACHE[cache_key] = result
                 return result
         except Exception as exc:
             logger.warning("Geocoder attempt failed: %s", exc)
