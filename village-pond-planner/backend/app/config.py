@@ -86,15 +86,7 @@ class Settings(BaseSettings):
     POND_DEFAULT_DEPTH_M: float = 3.0  # used when storage / area calc fails
 
     # ─── CORS ──────────────────────────────────────────────────────
-    CORS_ORIGINS: list[str] = [
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:5173",
-        "http://localhost:8080",
-        "http://127.0.0.1:8080",
-        "http://localhost:4000",
-        "null",  # file:// origin for local HTML dev
-    ]
+    CORS_ORIGINS: list[str] = ["*"]
 
 
 # Singleton — import this everywhere
