@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     # DEM resolution in degrees (~90m for SRTM-3, ~30m for SRTM-1)
     DEM_RESOLUTION_DEG: float = 0.0008333  # ≈ 90 m
     # Number of grid points along each axis when sampling elevation
-    DEM_GRID_POINTS: int = 50
+    DEM_GRID_POINTS: int = 25
     # Contour interval in metres
     CONTOUR_INTERVAL_M: float = 10.0
     # Slope threshold below which land is "low slope" (degrees)
