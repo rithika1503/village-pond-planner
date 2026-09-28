@@ -61,7 +61,7 @@ async def analyze_polygon(req: PolygonAnalysisRequest):
       8. Compute suitability score
       9. Build + return response
     """
-    async with asyncio.timeout(45):
+    async with asyncio.timeout(120):
         return await _run_analysis(req)
 
 
